@@ -1,0 +1,71 @@
+defaults:
+  - _self_
+  - override hydra/job_logging: colorlog
+  - override hydra/hydra_logging: colorlog
+
+# Dataset related
+sampling_rate: 16000
+segment: 32000
+stride: 32000
+shift: 32000
+
+batch_size: 16
+batch_size_valid: 1
+epochs: 1
+
+eval_every: 1  # compute test metrics every so epochs
+
+# Loss related
+loss:
+  l1_loss: 1.0
+  multistftloss:
+    weight: 1.0
+    factor_mag: 0.5
+    factor_sc: 0.5
+    fft_sizes: [1024, 2048, 512]
+    hop_sizes: [120, 240, 50]
+    win_lengths: [600, 1200, 240]
+    window: hann_window
+
+# Optimization related
+lr: 3e-4
+optim: adam
+betas: [0.9, 0.99]
+clip_grad_norm: 1.0
+
+# Logging and printing, and does not impact training
+device: cuda
+num_prints: 10
+num_workers: 5
+ddp:
+  master_addr: localhost
+  master_port: 12355
+
+checkpoint: true
+checkpoint_file: checkpoint.th
+continue_from: 
+samples_dir: samples
+log_dir: tensorbd
+
+# Other stuff
+seed: 2039
+
+# Hydra config
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d_%H-%M-%S}
+
+  job:
+    chdir: true
+
+  job_logging:
+    handlers:
+      file:
+        class: logging.FileHandler
+        mode: w
+        formatter: colorlog
+        filename: trainer.log
+      console:
+        class: logging.StreamHandler
+        formatter: colorlog
+        stream: ext://sys.stderr
