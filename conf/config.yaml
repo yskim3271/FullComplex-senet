@@ -5,15 +5,20 @@ defaults:
 
 # Dataset related
 sampling_rate: 16000
-segment: 32000
-stride: 32000
-shift: 32000
+segment: 64000
+stride: 16000
+
+shift: 8000
+shift_same: false
+remix: true
+bandmask: 0.2
+revecho: 0
 
 batch_size: 16
 batch_size_valid: 1
-epochs: 1
+epochs: 200
 
-eval_every: 1  # compute test metrics every so epochs
+eval_every: 200  # compute test metrics every so epochs
 
 # Loss related
 loss:

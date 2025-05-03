@@ -14,7 +14,6 @@ class VoiceBankDataset:
                  sampling_rate=16_000,
                  segment=None, 
                  stride=None, 
-                 shift=None, 
                  with_id=False,
                  ):
         # Initialize variables with constructor arguments
@@ -22,7 +21,6 @@ class VoiceBankDataset:
         self.sampling_rate = sampling_rate
         self.segment = segment
         self.stride = stride
-        self.shift = shift
         self.with_id = with_id
         
         # Prepare lists for noisy and clean audio arrays
@@ -52,16 +50,6 @@ class VoiceBankDataset:
         else:
             noisy = self.noisy_set[index]
             clean = self.clean_set[index]
-
-        # If shift is specified, randomly pick an offset for noisy and clean
-        if self.shift:
-            t = noisy.shape[-1] - self.shift
-            # Ensure shift is even and enough frames remain
-            assert self.shift % 2 == 0 and t > 0
-            offset = random.randint(0, self.shift)
-            # Cut both noisy and clean with the chosen offset
-            noisy = noisy[..., offset:offset+t]
-            clean = clean[..., offset:offset+t]
         
         noisy = torch.tensor(noisy, dtype=torch.float32)
         clean = torch.tensor(clean, dtype=torch.float32)

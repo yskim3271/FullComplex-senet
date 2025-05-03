@@ -103,9 +103,7 @@ def run(rank, world_size, args):
         sampling_rate=args.sampling_rate,
         segment=args.segment, 
         stride=args.stride, 
-        shift=args.shift,
     )
-    print(f"trainset len: {len(tr_dataset)}")
     
     # Set up distributed sampler
     tr_sampler = DistributedSampler(tr_dataset) if world_size > 1 else None

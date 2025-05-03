@@ -13,6 +13,7 @@ from enhance import enhance
 from evaluate import evaluate
 from utils import bold, copy_state, pull_metric, swap_state, LogProgress
 from criteria import CompositeLoss
+from augment import Remix, BandMask, RevEcho, Shift
 
 class Solver(object):
     def __init__(
@@ -36,6 +37,19 @@ class Solver(object):
         self.model = model
         self.optim = optim
         self.logger = logger
+
+        # Data augmentation
+        augment = []
+        if args.remix:
+            augment.append(Remix())
+        if args.bandmask:
+            augment.append(BandMask(args.bandmask, sample_rate=args.sampling_rate))
+        if args.revecho:
+            augment.append(RevEcho(args.revecho))
+        if args.shift:
+            augment.append(Shift(args.shift, args.shift_same))
+        self.augment = torch.nn.Sequential(*augment)
+
 
         # Basic config
         self.device = device or torch.device(args.device)
@@ -305,9 +319,14 @@ class Solver(object):
             if mask is not None:
                 mask = mask.to(self.device)
             
-            # Move inputs to the correct device
             noisy = noisy.to(self.device)
-            clean = clean.to(self.device)                    
+            clean = clean.to(self.device)
+            # Move inputs to the correct device
+            if not valid:
+                sources = torch.stack([noisy - clean, clean])
+                sources = self.augment(sources)
+                noise, clean = sources
+                noisy = noise + clean
 
             clean_hat = self.model(noisy)
             
