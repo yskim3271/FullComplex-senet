@@ -13,6 +13,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 from datasets import load_dataset
+from models.discriminator import MetricGAN_Discriminator
 
 from data import VoiceBankDataset, StepSampler, validation_collate_fn
 from solver import Solver
@@ -70,21 +71,46 @@ def run(rank, world_size, args):
     random.seed(args.seed)
     np.random.seed(args.seed)
     
+
     # Set device
     device = torch.device(f'cuda:{rank}')
     
     model_args = args.model
-    model_name = model_args.model_name
+    model_lib = model_args.model_lib
+    model_class = model_args.model_class
     
     # import model library
-    module = importlib.import_module("models." + model_name)
-    model_class = getattr(module, model_name)
+    module = importlib.import_module("models." + model_lib)
+    model_class = getattr(module, model_class)
     
     model = model_class(**model_args.param)
     model = model.to(args.device)
 
+    discriminator = {}
+    optim_disc = {}
+
+    if args.optim == "adam":
+        optim_class = torch.optim.Adam
+    elif args.optim == "adamW" or args.optim == "adamw":
+        optim_class = torch.optim.AdamW
+    
+
+    metricganloss_cfg = args.loss.get("metricganloss")
+
+    if metricganloss_cfg is not None:
+        discriminator['MetricGAN'] = MetricGAN_Discriminator(ndf=metricganloss_cfg.ndf)
+        discriminator['MetricGAN'] = discriminator['MetricGAN'].to(args.device)
+        del metricganloss_cfg.ndf
+    
     if world_size > 1:
         model = DDP(model, device_ids=[rank])
+        for key in discriminator.keys():
+            discriminator[key] = DDP(discriminator[key], device_ids=[rank])
+    
+    # optimizer
+    optim = optim_class(model.parameters(), lr=args.lr, betas=args.betas)
+    for key in discriminator.keys():
+        optim_disc[key] = optim_class(discriminator[key].parameters(), lr=args.lr, betas=args.betas)
 
     # Load dataset
     if rank == 0:
@@ -161,17 +187,13 @@ def run(rank, world_size, args):
         "tr_sampler": tr_sampler,
     }
     
-    # optimizer
-    if args.optim == "adam":
-        optim = torch.optim.Adam(model.parameters(), lr=args.lr, betas=args.betas)
-    elif args.optim == "adamW" or args.optim == "adamw":
-        optim = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=args.betas)
-    
     # Solver
     solver = Solver(
         data=dataloader,
         model=model,
+        discriminator=discriminator,
         optim=optim,
+        optim_disc=optim_disc,
         args=args,
         logger=logger,
         rank=rank,

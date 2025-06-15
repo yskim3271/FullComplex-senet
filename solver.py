@@ -19,8 +19,10 @@ class Solver(object):
     def __init__(
         self, 
         data, 
-        model, 
+        model,
+        discriminator,
         optim, 
+        optim_disc,
         args, 
         logger, 
         rank=0,     
@@ -35,7 +37,9 @@ class Solver(object):
         self.tr_sampler = data['tr_sampler']    # Distributed sampler for training
         
         self.model = model
+        self.discriminator = discriminator
         self.optim = optim
+        self.optim_disc = optim_disc
         self.logger = logger
 
         # Data augmentation
@@ -61,7 +65,7 @@ class Solver(object):
         self.loss = args.loss
         self.clip_grad_norm = args.clip_grad_norm
         
-        self.loss = CompositeLoss(args.loss).to(self.device)
+        self.loss = CompositeLoss(args.loss, self.discriminator).to(self.device)
 
         self.eval_every = args.eval_every   # interval for evaluation
             
@@ -363,6 +367,20 @@ class Solver(object):
                     
                 # Optimizer step
                 self.optim.step()
+                
+                if self.discriminator is not None:
+                    disc_loss_dict = self.loss.forward_disc_loss(clean_hat.detach(), clean)
+                    for key, loss in disc_loss_dict.items():
+                        if loss is not None:
+                            self.optim_disc[key].zero_grad()
+                            loss.backward()
+                            self.optim_disc[key].step()
+                            if self.rank == 0:
+                                logprog.append(**{f'Discriminator_{key}_Loss': format(loss.item(), "4.5f")})
+                                self.writer.add_scalar(f"train/Discriminator_{key}_Loss", loss.item(), epoch * len(data_loader) + i)
+                        elif self.rank == 0:
+                            logprog.append(**{f'Discriminator_{key}_Loss': format(0.0, "4.5f")})
+                            self.writer.add_scalar(f"train/Discriminator_{key}_Loss", 0.0, epoch * len(data_loader) + i)
                 
             else:
                 # Validation step (rank=0 logs)
