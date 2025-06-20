@@ -267,10 +267,23 @@ class Solver(object):
                         
                         # Temporarily swap model weights with best_state for evaluation
                         with swap_state(self.model.module if self.is_distributed else self.model, self.best_state['model']):
-                            ev_metric = evaluate(self.args, self.model, self.ev_loader, self.logger, epoch)
+                            ev_metric = evaluate(
+                                args= self.args, 
+                                model= self.model, 
+                                data_loader=self.ev_loader,
+                                logger=self.logger, 
+                                epoch=epoch
+                            )
 
                             self.logger.info('Enhance and save samples...')
-                            enhance(self.args, self.model, self.tt_loader, self.logger, epoch, self.samples_dir)
+                            enhance(
+                                args= self.args, 
+                                model= self.model, 
+                                data_loader= self.tt_loader, 
+                                logger= self.logger, 
+                                epoch= epoch, 
+                                local_out_dir=self.samples_dir
+                            )
                     
                         for k, v in ev_metric.items():
                             self.writer.add_scalar(f"test/{k}", v, epoch)
@@ -314,14 +327,7 @@ class Solver(object):
         
         for i, data in enumerate(logprog):
             # Unpack data
-            if valid:
-                noisy, clean, mask = data
-            else:
-                noisy, clean = data
-                mask = None
-            
-            if mask is not None:
-                mask = mask.to(self.device)
+            noisy, clean = data
             
             noisy = noisy.to(self.device)
             clean = clean.to(self.device)
@@ -335,7 +341,7 @@ class Solver(object):
             clean_hat = self.model(noisy)
             
             # Compute loss
-            loss_all, loss_dict = self.loss(clean_hat, clean, mask)
+            loss_all, loss_dict = self.loss(clean_hat, clean)
             
             # For distributed training, we do all_reduce
             if self.is_distributed:
@@ -352,10 +358,10 @@ class Solver(object):
                     # Log current losses in the progress bar
                     for i, (key, value) in enumerate(loss_dict.items()):
                         if i == 0:
-                            logprog.update(**{key.capitalize(): format(value, "4.5f")})
+                            logprog.update(**{f"{key}_Loss": format(value, "4.5f")})
                         else:
-                            logprog.append(**{key.capitalize(): format(value, "4.5f")})
-                        self.writer.add_scalar(f"train/{key.capitalize()}", value, epoch * len(data_loader) + i)
+                            logprog.append(**{f"{key}_Loss": format(value, "4.5f")})
+                        self.writer.add_scalar(f"train/{key}_Loss", value, epoch * len(data_loader) + i)
                     self.writer.add_scalar("train/Loss", loss_all.item(), epoch * len(data_loader) + i)
                 
                 # Backpropagation
@@ -369,27 +375,26 @@ class Solver(object):
                 self.optim.step()
                 
                 if self.discriminator is not None:
-                    disc_loss_dict = self.loss.forward_disc_loss(clean_hat.detach(), clean)
-                    for key, loss in disc_loss_dict.items():
-                        if loss is not None:
-                            self.optim_disc[key].zero_grad()
-                            loss.backward()
-                            self.optim_disc[key].step()
-                            if self.rank == 0:
-                                logprog.append(**{f'Discriminator_{key}_Loss': format(loss.item(), "4.5f")})
-                                self.writer.add_scalar(f"train/Discriminator_{key}_Loss", loss.item(), epoch * len(data_loader) + i)
-                        elif self.rank == 0:
-                            logprog.append(**{f'Discriminator_{key}_Loss': format(0.0, "4.5f")})
-                            self.writer.add_scalar(f"train/Discriminator_{key}_Loss", 0.0, epoch * len(data_loader) + i)
+                    disc_loss = self.loss.forward_disc_loss(clean_hat.detach(), clean)
+                    if disc_loss is not None:
+                        self.optim_disc.zero_grad()
+                        disc_loss.backward()
+                        self.optim_disc.step()
+                        if self.rank == 0:
+                            logprog.append(**{f'Discriminator_Loss': format(disc_loss, "4.5f")})
+                            self.writer.add_scalar(f"train/Discriminator_Loss", disc_loss, epoch * len(data_loader) + i)
+                    elif self.rank == 0:
+                        logprog.append(**{f'Discriminator_Loss': format(0.0, "4.5f")})
+                        self.writer.add_scalar(f"train/Discriminator_Loss", 0.0, epoch * len(data_loader) + i)
                 
             else:
                 # Validation step (rank=0 logs)
                 if self.rank == 0:
                     for i, (key, value) in enumerate(loss_dict.items()):
                         if i == 0:
-                            logprog.update(**{key.capitalize(): format(value, "4.5f")})
+                            logprog.update(**{f"{key}_Loss": format(value, "4.5f")})
                         else:
-                            logprog.append(**{key.capitalize(): format(value, "4.5f")})
+                            logprog.append(**{f"{key}_Loss": format(value, "4.5f")})
                     self.writer.add_scalar("valid/Loss", loss_all.item(), epoch * len(data_loader) + i)
         
         # Return the average loss over the entire epoch

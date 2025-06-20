@@ -122,18 +122,3 @@ class StepSampler(torch.utils.data.Sampler):
     def __len__(self):
         # Length is how many indices we can produce based on the step
         return self.length // self.step
-
-def validation_collate_fn(batch):
-    noisy, clean = zip(*batch)
-        
-    noisy = [inp.clone().detach().squeeze() for inp in noisy]
-    clean = [inp.clone().detach().squeeze() for inp in clean]
-           
-    padded_noisy = pad_sequence(noisy, batch_first=True, padding_value=0.0).unsqueeze(1)
-    padded_clean = pad_sequence(clean, batch_first=True, padding_value=0.0).unsqueeze(1)
-    
-    mask = torch.zeros(padded_noisy.shape, dtype=torch.float32)
-    for i, length in enumerate([inp.size(0) for inp in noisy]):
-        mask[i, :, :length] = 1
-    
-    return padded_noisy, padded_clean, mask

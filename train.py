@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset
 from models.discriminator import MetricGAN_Discriminator
 
-from data import VoiceBankDataset, StepSampler, validation_collate_fn
+from data import VoiceBankDataset, StepSampler
 from solver import Solver
 
 def kill_child_processes():
@@ -86,8 +86,8 @@ def run(rank, world_size, args):
     model = model_class(**model_args.param)
     model = model.to(args.device)
 
-    discriminator = {}
-    optim_disc = {}
+    discriminator = None
+    optim_disc = None
 
     if args.optim == "adam":
         optim_class = torch.optim.Adam
@@ -95,22 +95,22 @@ def run(rank, world_size, args):
         optim_class = torch.optim.AdamW
     
 
-    metricganloss_cfg = args.loss.get("metricganloss")
+    metricganloss_cfg = args.loss.get("metricgan_loss")
 
     if metricganloss_cfg is not None:
-        discriminator['MetricGAN'] = MetricGAN_Discriminator(ndf=metricganloss_cfg.ndf)
-        discriminator['MetricGAN'] = discriminator['MetricGAN'].to(args.device)
+        discriminator = MetricGAN_Discriminator(ndf=metricganloss_cfg.ndf)
+        discriminator = discriminator.to(args.device)
         del metricganloss_cfg.ndf
     
     if world_size > 1:
         model = DDP(model, device_ids=[rank])
-        for key in discriminator.keys():
-            discriminator[key] = DDP(discriminator[key], device_ids=[rank])
-    
+        if discriminator is not None:
+            discriminator = DDP(discriminator, device_ids=[rank])
+
     # optimizer
     optim = optim_class(model.parameters(), lr=args.lr, betas=args.betas)
-    for key in discriminator.keys():
-        optim_disc[key] = optim_class(discriminator[key].parameters(), lr=args.lr, betas=args.betas)
+    if discriminator is not None:
+        optim_disc = optim_class(discriminator.parameters(), lr=args.lr, betas=args.betas)
 
     # Load dataset
     if rank == 0:
@@ -153,7 +153,6 @@ def run(rank, world_size, args):
         batch_size=1,
         sampler=va_sampler,
         num_workers=args.num_workers,
-        collate_fn=validation_collate_fn,
         pin_memory=True
     )
     

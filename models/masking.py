@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchaudio.models.conformer import _FeedForwardModule, _ConvolutionModule
-from models.stft import mag_pha_stft, mag_pha_istft, pad_stft_input
+from stft import mag_pha_stft, mag_pha_istft, pad_stft_input
 
 class LearnableSigmoid2d(nn.Module):
     def __init__(self, in_features, beta=1):
