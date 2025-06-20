@@ -376,16 +376,13 @@ class Solver(object):
                 
                 if self.discriminator is not None:
                     disc_loss = self.loss.forward_disc_loss(clean_hat.detach(), clean)
-                    if disc_loss is not None:
-                        self.optim_disc.zero_grad()
-                        disc_loss.backward()
-                        self.optim_disc.step()
-                        if self.rank == 0:
-                            logprog.append(**{f'Discriminator_Loss': format(disc_loss, "4.5f")})
-                            self.writer.add_scalar(f"train/Discriminator_Loss", disc_loss, epoch * len(data_loader) + i)
-                    elif self.rank == 0:
-                        logprog.append(**{f'Discriminator_Loss': format(0.0, "4.5f")})
-                        self.writer.add_scalar(f"train/Discriminator_Loss", 0.0, epoch * len(data_loader) + i)
+                    self.optim_disc.zero_grad()
+                    disc_loss.backward()
+                    self.optim_disc.step()
+                    if self.rank == 0:
+                        logprog.append(**{f'Discriminator_Loss': format(disc_loss, "4.5f")})
+                        self.writer.add_scalar(f"train/Discriminator_Loss", disc_loss, epoch * len(data_loader) + i)
+
                 
             else:
                 # Validation step (rank=0 logs)
