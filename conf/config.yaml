@@ -16,9 +16,9 @@ revecho: 0
 
 batch_size: 4
 batch_size_valid: 1
-epochs: 200
+epochs: 10
 
-eval_every: 100  # compute test metrics every so epochs
+eval_every: 10  # compute test metrics every so epochs
 
 # Loss related
 loss:
@@ -26,7 +26,7 @@ loss:
     weight: 0.2
   # multispectral_loss:
   #   weight_mag: 0.9
-  #   weight_com: 0.1
+  #   weight_com: 0.2
   #   weight_pha: 0.3
   #   fft_sizes: [800, 400, 200]
   #   hop_sizes: [200, 100, 50]
@@ -39,14 +39,14 @@ loss:
     fft_size: 400
     hop_size: 100
     win_length: 400
-  metricgan_loss:
-    weight_disc: 1.0
-    weight_gen: 0.1
-    ndf: 16
-    fft_size: 400
-    hop_size: 100
-    win_length: 400
-    compress_factor: 0.3
+  # metricgan_loss:
+  #   weight_disc: 1.0
+  #   weight_gen: 0.1
+  #   ndf: 16
+  #   fft_size: 400
+  #   hop_size: 100
+  #   win_length: 400
+  #   compress_factor: 0.3
 
 
 # Optimization related
