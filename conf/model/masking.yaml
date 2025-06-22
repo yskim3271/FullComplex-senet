@@ -14,3 +14,5 @@ param:
   depthwise_conv_kernel_size: 15
   dropout: 0.15
   use_group_norm: true
+  use_conformer: false
+  num_attetion_heads: 4
