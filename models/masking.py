@@ -71,6 +71,26 @@ class Conmer(nn.Module):
         x = self.final_layer_norm(x)
         return x
 
+class Conformer(nn.Module):
+    def __init__(self, 
+                 input_dim: int, 
+                 ffn_dim: int, 
+                 depthwise_conv_kernel_size: int, 
+                 num_attention_heads: int,
+                 dropout: float = 0.0, 
+                 use_group_norm: bool = False) -> None:
+        super().__init__()
+        self.conformer_layer = ConformerLayer(
+            input_dim=input_dim,
+            ffn_dim=ffn_dim,
+            num_attention_heads=num_attention_heads,
+            depthwise_conv_kernel_size=depthwise_conv_kernel_size,
+            dropout=dropout,
+            use_group_norm=use_group_norm,
+        )
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return self.conformer_layer(input, None)  # key_padding_mask is not used in this case
 
 class TSCB(nn.Module):
     def __init__(self, 
@@ -83,6 +103,7 @@ class TSCB(nn.Module):
                  num_attention_heads=4
                  ):
         super(TSCB, self).__init__()
+        self.use_conformer = use_conformer
         
         if use_conformer:
             self.time_conmer = ConformerLayer(
@@ -339,6 +360,8 @@ class masking(nn.Module):
         self.depthwise_conv_kernel_size = depthwise_conv_kernel_size
         self.dropout = dropout
         self.use_group_norm = use_group_norm
+        self.use_conformer = use_conformer
+        self.num_attention_heads = num_attention_heads
 
         for i in range(len(self.hidden) - 1):
             setattr(self, f"dense_encoder_{i}", 
@@ -370,8 +393,8 @@ class masking(nn.Module):
                          depthwise_conv_kernel_size=self.depthwise_conv_kernel_size, 
                          dropout=self.dropout, 
                          use_group_norm=self.use_group_norm,
-                         use_conformer=use_conformer,
-                         num_attention_heads=num_attention_heads))
+                         use_conformer=self.use_conformer,
+                         num_attention_heads=self.num_attention_heads))
 
 
     def forward(self, inputs, lens=False):

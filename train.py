@@ -93,7 +93,6 @@ def run(rank, world_size, args):
         optim_class = torch.optim.Adam
     elif args.optim == "adamW" or args.optim == "adamw":
         optim_class = torch.optim.AdamW
-    
 
     metricganloss_cfg = args.loss.get("metricgan_loss")
 
@@ -111,6 +110,15 @@ def run(rank, world_size, args):
     optim = optim_class(model.parameters(), lr=args.lr, betas=args.betas)
     if discriminator is not None:
         optim_disc = optim_class(discriminator.parameters(), lr=args.lr, betas=args.betas)
+        
+    scheduler = None
+    scheduler_disc = None
+
+    if args.lr_decay is not None:
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optim, gamma=args.lr_decay, last_epoch=-1)
+        if discriminator is not None:
+            # Use a separate scheduler for the discriminator
+            scheduler_disc = torch.optim.lr_scheduler.ExponentialLR(optim_disc, gamma=args.lr_decay, last_epoch=-1)
 
     # Load dataset
     if rank == 0:
@@ -193,6 +201,8 @@ def run(rank, world_size, args):
         discriminator=discriminator,
         optim=optim,
         optim_disc=optim_disc,
+        scheduler=scheduler,
+        scheduler_disc=scheduler_disc,
         args=args,
         logger=logger,
         rank=rank,

@@ -1,12 +1,49 @@
-import random
 import torch
 import torch.utils.data
-import torchaudio
 import math
 import numpy as np
-from torch.nn.utils.rnn import pad_sequence
 
-from scipy import signal
+class Remix(torch.nn.Module):
+    """Remix.
+    Mixes different noises with clean speech within a given batch
+    """
+
+    def forward(self, sources):
+        noise, clean = sources
+        bs, *other = noise.shape
+        device = noise.device
+        perm = torch.argsort(torch.rand(bs, device=device), dim=0)
+        return torch.stack([noise[perm], clean])
+
+
+class Shift(torch.nn.Module):
+    """Shift."""
+
+    def __init__(self, shift=8000, same=False):
+        """__init__.
+
+        :param shift: randomly shifts the signals up to a given factor
+        :param same: shifts both clean and noisy files by the same factor
+        """
+        super().__init__()
+        self.shift = shift
+        self.same = same
+
+    def forward(self, wav):
+        sources, batch, channels, length = wav.shape
+        length = length - self.shift
+        if self.shift > 0:
+            if not self.training:
+                wav = wav[..., :length]
+            else:
+                offsets = torch.randint(
+                    self.shift,
+                    [1 if self.same else sources, batch, 1, 1], device=wav.device)
+                offsets = offsets.expand(sources, -1, channels, -1)
+                indexes = torch.arange(length, device=wav.device)
+                wav = wav.gather(3, indexes + offsets)
+        return wav
+
 
 class VoiceBankDataset:
     def __init__(self, 
@@ -42,7 +79,6 @@ class VoiceBankDataset:
         return len(self.noisy_set)
 
     def __getitem__(self, index):
-        eps = 1e-6
         
         if self.with_id:
             noisy, id = self.noisy_set[index]
@@ -53,6 +89,10 @@ class VoiceBankDataset:
         
         noisy = torch.tensor(noisy, dtype=torch.float32)
         clean = torch.tensor(clean, dtype=torch.float32)
+        
+        norm_factor = torch.sqrt(len(noisy) / torch.sum(noisy ** 2.0))
+        clean = clean * norm_factor
+        noisy = noisy * norm_factor
         
         if self.with_id:
             return noisy, clean, id

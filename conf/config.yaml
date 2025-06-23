@@ -5,25 +5,23 @@ defaults:
 
 # Dataset related
 sampling_rate: 16000
-segment: 64000
-stride: 16000
+segment: 40000
+stride: 32000
 
-shift: 8000
+shift: 16000
 shift_same: false
 remix: true
-bandmask: 0.2
-revecho: 0
 
 batch_size: 4
 batch_size_valid: 1
-epochs: 200
+epochs: 10
 
 eval_every: 100  # compute test metrics every so epochs
 
 # Loss related
 loss:
   l1_loss:
-    weight: 0.6
+    weight: 0.3
   # multispectral_loss:
   #   weight_mag: 0.9
   #   weight_com: 0.2
@@ -51,9 +49,10 @@ loss:
     pesq_workers: 10
 
 # Optimization related
-lr: 3e-4
+lr: 5e-4
+lr_decay: 0.99
 optim: adamW
-betas: [0.9, 0.99]
+betas: [0.8, 0.99]
 clip_grad_norm: 
 
 # Logging and printing, and does not impact training
@@ -66,7 +65,7 @@ ddp:
 
 checkpoint: true
 checkpoint_file: checkpoint.th
-continue_from: 
+continue_from: /home/user114/yunsik/seconmer/outputs/2025-06-23_22-52-50
 samples_dir: samples
 log_dir: tensorbd
 

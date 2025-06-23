@@ -15,4 +15,4 @@ param:
   dropout: 0.15
   use_group_norm: true
   use_conformer: false
-  num_attetion_heads: 4
+  num_attention_heads: 4
