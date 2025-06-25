@@ -11,7 +11,7 @@ from pathlib import Path
 from enhance import enhance
 from evaluate import evaluate
 from utils import bold, copy_state, pull_metric, swap_state, LogProgress
-from criteria import CompositeLoss
+from criteria import CompositeLoss, batch_pesq
 from data import Remix, Shift
 
 class Solver(object):
@@ -67,6 +67,7 @@ class Solver(object):
         self.loss = CompositeLoss(args.loss, self.discriminator).to(self.device)
 
         self.eval_every = args.eval_every   # interval for evaluation
+        self.validate_with_pesq = args.validate_with_pesq
             
         # Checkpoint settings
         self.checkpoint = args.checkpoint
@@ -100,7 +101,14 @@ class Solver(object):
         
         # Create a package dict
         package = {}
-        package['model'] = copy_state(self.model.module.state_dict() if self.is_distributed else self.model.state_dict())
+        if self.is_distributed:
+            # If using DDP, we need to copy the state dict from the module
+            package['model'] = copy_state(self.model.module.state_dict())
+            package['discriminator'] = copy_state(self.discriminator.module.state_dict()) if self.discriminator is not None else None
+        else:
+            # In non-distributed mode, just use the model's state dict directly
+            package['model'] = copy_state(self.model.state_dict())
+            package['discriminator'] = copy_state(self.discriminator.state_dict()) if self.discriminator is not None else None
         package['optimizer'] = self.optim.state_dict()
         package['optimizer_disc'] = self.optim_disc.state_dict() if self.optim_disc is not None else None
         package['scheduler'] = self.scheduler.state_dict() if self.scheduler is not None else None
@@ -248,8 +256,11 @@ class Solver(object):
                 self.logger.info('-' * 70)
                 self.logger.info('Validation...')
             
-            with torch.no_grad():
-                valid_loss = self._run_one_epoch(epoch, valid=True)
+                if self.validate_with_pesq:
+                    valid_loss = self._validate_with_pesq(epoch)
+                else:
+                    with torch.no_grad():
+                        valid_loss = self._run_one_epoch(epoch, valid=True)
             
             if self.rank == 0:
                 self.logger.info(
@@ -258,7 +269,7 @@ class Solver(object):
                 
                 if self.scheduler is not None:
                     self.logger.info(f"Learning rate: {self.scheduler.get_last_lr()[0]:.6f}")
-
+                    self.writer.add_scalar("train/Learning_Rate", self.scheduler.get_last_lr()[0], epoch)
             
             # If distributed, we can synchronize here so that next epoch starts together
             if self.is_distributed:
@@ -364,8 +375,8 @@ class Solver(object):
                 
                 if self.rank == 0:
                     # Log current losses in the progress bar
-                    for i, (key, value) in enumerate(loss_dict.items()):
-                        if i == 0:
+                    for j, (key, value) in enumerate(loss_dict.items()):
+                        if j == 0:
                             logprog.update(**{f"{key}_Loss": format(value, "4.5f")})
                         else:
                             logprog.append(**{f"{key}_Loss": format(value, "4.5f")})
@@ -394,8 +405,8 @@ class Solver(object):
             else:
                 # Validation step (rank=0 logs)
                 if self.rank == 0:
-                    for i, (key, value) in enumerate(loss_dict.items()):
-                        if i == 0:
+                    for j, (key, value) in enumerate(loss_dict.items()):
+                        if j == 0:
                             logprog.update(**{f"{key}_Loss": format(value, "4.5f")})
                         else:
                             logprog.append(**{f"{key}_Loss": format(value, "4.5f")})
@@ -408,3 +419,45 @@ class Solver(object):
         
         # Return the average loss over the entire epoch
         return total_loss / len(data_loader)
+    
+
+    def _validate_with_pesq(self, epoch):
+        """Run validation and compute PESQ."""
+        data_loader = self.va_loader
+        label = "Valid with PESQ"
+        name = label + f" | Epoch {epoch + 1}"
+        
+        logprog = LogProgress(self.logger, data_loader, updates=self.num_prints, name=name)
+        
+        clean_list = []
+        clean_hat_list = []
+        with torch.no_grad():
+            for data in logprog:
+                noisy, clean = data
+                
+                clean_hat = self.model(noisy.to(self.device))
+                clean_list.append(clean.squeeze().detach().cpu().numpy())
+                clean_hat_list.append(clean_hat.squeeze().detach().cpu().numpy())
+                
+        pesq_score = batch_pesq(
+            clean_list, 
+            clean_hat_list, 
+            workers=10,
+            normalize=False
+        )
+        
+        logprog.info(f"PESQ Score: {pesq_score:.5f}")
+        self.writer.add_scalar("valid/PESQ", pesq_score, epoch * len(data_loader))
+        
+        return pesq_score
+        
+        
+                
+        
+        
+                
+        
+        
+        
+        
+        
