@@ -255,11 +255,10 @@ class Solver(object):
             if self.rank == 0:
                 self.logger.info('-' * 70)
                 self.logger.info('Validation...')
-            
-                if self.validate_with_pesq:
-                    valid_loss = self._validate_with_pesq(epoch)
-                else:
-                    with torch.no_grad():
+                with torch.no_grad():
+                    if self.validate_with_pesq:
+                        valid_loss = self._validate_with_pesq(epoch)
+                    else:
                         valid_loss = self._run_one_epoch(epoch, valid=True)
             
             if self.rank == 0:
@@ -436,8 +435,8 @@ class Solver(object):
                 noisy, clean = data
                 
                 clean_hat = self.model(noisy.to(self.device))
-                clean_list.append(clean.squeeze().detach().cpu().numpy())
-                clean_hat_list.append(clean_hat.squeeze().detach().cpu().numpy())
+                clean_list.append(clean.squeeze(1).detach().cpu().numpy())
+                clean_hat_list.append(clean_hat.squeeze(1).detach().cpu().numpy())
                 
         pesq_score = batch_pesq(
             clean_list, 
@@ -445,6 +444,8 @@ class Solver(object):
             workers=10,
             normalize=False
         )
+        
+        pesq_score = pesq_score.mean().item()
         
         logprog.info(f"PESQ Score: {pesq_score:.5f}")
         self.writer.add_scalar("valid/PESQ", pesq_score, epoch * len(data_loader))
