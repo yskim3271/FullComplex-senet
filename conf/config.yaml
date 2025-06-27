@@ -14,39 +14,39 @@ remix: true
 
 batch_size: 4
 batch_size_valid: 1
-epochs: 10
+epochs: 200
 
 eval_every: 100  # compute test metrics every so epochs
 
 # Loss related
 loss:
   l1_loss:
-    weight: 0.3
-  # multispectral_loss:
-  #   weight_mag: 0.9
-  #   weight_com: 0.2
-  #   weight_pha: 0.3
+    weight: 1
+  multispectral_loss:
+    weight_mag: 0.5
+    weight_com: 0.5
+    weight_pha: 0.5
+    fft_sizes: [1024, 2048, 512]
+    hop_sizes: [120, 240, 50]
+    win_lengths: [600, 1200, 240]
+    compress_factor: 0.3
+  # spectral_loss:
+  #   weight_mag: 0.5
+  #   weight_com: 0.5
+  #   weight_pha: 0.5
   #   compress_factor: 0.3
-  #   fft_sizes: [800, 400, 200]
-  #   hop_sizes: [200, 100, 50]
-  #   win_lengths: [800, 400, 200]
-  spectral_loss:
-    weight_mag: 0.9
-    weight_com: 0.2
-    weight_pha: 0.3
-    compress_factor: 0.3
-    fft_size: 400
-    hop_size: 100
-    win_length: 400
-  metricgan_loss:
-    weight_disc: 1.0
-    weight_gen: 0.1
-    ndf: 16
-    fft_size: 400
-    hop_size: 100
-    win_length: 400
-    compress_factor: 0.3
-    pesq_workers: 10
+  #   fft_size: 400
+  #   hop_size: 100
+  #   win_length: 400
+  # metricgan_loss:
+  #   weight_disc: 10
+  #   weight_gen: 1
+  #   ndf: 16
+  #   fft_size: 400
+  #   hop_size: 100
+  #   win_length: 400
+  #   compress_factor: 0.3
+  #   pesq_workers: 10
 
 # Optimization related
 lr: 5e-4
@@ -66,7 +66,7 @@ ddp:
 
 checkpoint: true
 checkpoint_file: checkpoint.th
-continue_from: /home/user114/yunsik/seconmer/outputs/2025-06-23_22-52-50
+continue_from:
 samples_dir: samples
 log_dir: tensorbd
 

@@ -281,7 +281,10 @@ class Solver(object):
                 
                 # Update best_state if we got a new best validation loss
                 if valid_loss == best_loss:
-                    self.logger.info(bold('New best valid loss %.4f'), valid_loss)
+                    if self.validate_with_pesq:
+                        self.logger.info(bold('New best valid PESQ score %.4f'), (-valid_loss))
+                    else:
+                        self.logger.info(bold('New best valid loss %.4f'), valid_loss)
                     self.best_state = {'model': copy_state(self.model.module.state_dict() if self.is_distributed else self.model.state_dict())}
 
                 # Evaluate on ev_loader (test set) every eval_every epochs (or last epoch)
@@ -435,8 +438,8 @@ class Solver(object):
                 noisy, clean = data
                 
                 clean_hat = self.model(noisy.to(self.device))
-                clean_list.append(clean.squeeze(1).detach().cpu().numpy())
-                clean_hat_list.append(clean_hat.squeeze(1).detach().cpu().numpy())
+                clean_list.append(clean.squeeze().detach().cpu().numpy())
+                clean_hat_list.append(clean_hat.squeeze().detach().cpu().numpy())
                 
         pesq_score = batch_pesq(
             clean_list, 
@@ -444,10 +447,10 @@ class Solver(object):
             workers=10,
             normalize=False
         )
-        
-        pesq_score = pesq_score.mean().item()
-        
-        logprog.info(f"PESQ Score: {pesq_score:.5f}")
+
+        pesq_score = -pesq_score.mean().item()
+
+        self.logger.info(f"PESQ Score: {pesq_score:.5f}")
         self.writer.add_scalar("valid/PESQ", pesq_score, epoch * len(data_loader))
         
         return pesq_score
