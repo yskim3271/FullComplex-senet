@@ -432,6 +432,7 @@ class Solver(object):
             clean_list, 
             clean_hat_list, 
             workers=8,
+            normalize=False
         )
 
         pesq_score = -pesq_score.mean().item()

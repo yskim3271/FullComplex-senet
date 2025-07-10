@@ -35,7 +35,7 @@ loss:
     win_length: 400
     compress_factor: 0.3
     pesq_workers: 8
-    use_torch_pesq: false
+    use_torch_pesq: true
 
 # Optimization related
 lr: 5e-4
@@ -43,7 +43,7 @@ lr_decay: 0.99
 optim: adamW
 betas: [0.8, 0.99]
 clip_grad_norm: 
-validate_with_pesq: false
+validate_with_pesq: true
 
 # Logging and printing, and does not impact training
 device: cuda
