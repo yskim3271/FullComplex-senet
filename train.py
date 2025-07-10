@@ -86,6 +86,13 @@ def run(rank, world_size, args):
     model = model_class(**model_args.param)
     model = model.to(args.device)
 
+    if rank == 0:
+        # Calculate and log the total number of parameters and model size
+        logger.info(f"Selected model: {model_lib}.{model_class}")
+        total_params = sum(p.numel() for p in model.parameters())
+        model_size_mb = (total_params) / (1024 * 1024)
+        logger.info(f"Model's size: {model_size_mb:.2f} MB")
+
     discriminator = None
     optim_disc = None
 
@@ -97,6 +104,14 @@ def run(rank, world_size, args):
     metricganloss_cfg = args.loss.get("metricgan_loss")
 
     if metricganloss_cfg is not None:
+        if world_size > 1 and not metricganloss_cfg.get("use_torch_pesq", False):
+            # Traditional PESQ calculation can occur deadlock with DDP. Use torch_pesq instead.
+            logger.error("MetricGAN Loss with traditional PESQ cannot be used with DDP. Please use a single GPU.")
+            cleanup()
+            if torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()
+            sys.exit(0)
+            
         discriminator = MetricGAN_Discriminator(ndf=metricganloss_cfg.ndf)
         discriminator = discriminator.to(args.device)
         del metricganloss_cfg.ndf
@@ -136,7 +151,6 @@ def run(rank, world_size, args):
         datapair_list=trainset,
         sampling_rate=args.sampling_rate,
         segment=args.segment, 
-        stride=args.stride, 
     )
     
     # Set up distributed sampler
@@ -155,11 +169,9 @@ def run(rank, world_size, args):
         datapair_list=testset,
         sampling_rate=args.sampling_rate
     )
-    va_sampler = DistributedSampler(va_dataset, shuffle=False) if world_size > 1 else None
     va_loader = DataLoader(
         dataset=va_dataset, 
         batch_size=1,
-        sampler=va_sampler,
         num_workers=args.num_workers,
         pin_memory=True
     )

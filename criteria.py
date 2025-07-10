@@ -3,7 +3,8 @@ import torch
 import torch.nn.functional as F
 from joblib import Parallel, delayed
 from pesq import pesq
-from stft import pad_stft_input, mag_pha_stft
+from stft import mag_pha_stft
+from torch_pesq import PesqLoss
 
 class L1_Loss(torch.nn.Module):
     def __init__(self, weight=1.0):
@@ -30,8 +31,9 @@ class SpectralLoss(torch.nn.Module):
                  hop_size=100, 
                  win_length=400,
                  compress_factor=1.0,
-                 weight_mag=1.0,
-                 weight_com=1.0,
+                 weight_lmag=1.0,
+                 weight_conv=1.0,
+                 weight_comp=1.0,
                  weight_pha=1.0
                  ):
         super(SpectralLoss, self).__init__()
@@ -40,28 +42,26 @@ class SpectralLoss(torch.nn.Module):
         self.hop_size = hop_size
         self.win_length = win_length
         self.compress_factor = compress_factor
-        self.weight_mag = weight_mag
-        self.weight_com = weight_com
+        self.weight_lmag = weight_lmag
+        self.weight_conv = weight_conv
+        self.weight_comp = weight_comp
         self.weight_pha = weight_pha
 
     def forward(self, x, y):
         
         x, y = x.squeeze(1), y.squeeze(1)
-        # x = pad_stft_input(x, self.fft_size, self.hop_size).squeeze(1)
-        # y = pad_stft_input(y, self.fft_size, self.hop_size).squeeze(1)
-        
+
         x_mag, x_pha, x_com = mag_pha_stft(x, self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
         y_mag, y_pha, y_com = mag_pha_stft(y, self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
 
-        loss_mag = F.l1_loss(torch.log(x_mag + 1e-8), torch.log(y_mag + 1e-8))
-        loss_com = torch.norm(x_mag - y_mag, p="fro") / torch.norm(y_mag, p="fro")
+        loss_lmag = F.l1_loss(torch.log(x_mag + 1e-8), torch.log(y_mag + 1e-8))
+        loss_conv = torch.norm(x_mag - y_mag, p="fro") / torch.norm(y_mag, p="fro")
+        loss_comp = F.mse_loss(x_com, y_com)
 
-        # loss_mag = F.mse_loss(x_mag, y_mag)
-        # loss_com = F.mse_loss(x_com, y_com)
         loss_ip, loss_gd, loss_iaf = phase_losses(x_pha, y_pha)
         loss_pha = loss_ip + loss_gd + loss_iaf
 
-        return loss_mag * self.weight_mag + loss_com * self.weight_com + loss_pha * self.weight_pha
+        return loss_lmag * self.weight_lmag + loss_conv * self.weight_conv + loss_comp * self.weight_comp + loss_pha * self.weight_pha
 
 class MultiResolutionSpectralLoss(torch.nn.Module):
     def __init__(self,
@@ -69,8 +69,9 @@ class MultiResolutionSpectralLoss(torch.nn.Module):
                  hop_sizes=[120, 240, 50],
                  win_lengths=[600, 1200, 240],
                  compress_factor=1.0,
-                 weight_mag=1.0,
-                 weight_com=1.0,
+                 weight_lmag=1.0,
+                 weight_conv=1.0,
+                 weight_comp=1.0,
                  weight_pha=1.0
     ):
         """Initialize Multi Resolution Spectral Loss.
@@ -85,7 +86,7 @@ class MultiResolutionSpectralLoss(torch.nn.Module):
         self.losses = torch.nn.ModuleList()
         for fs, ss, wl in zip(fft_sizes, hop_sizes, win_lengths):
             self.losses += [SpectralLoss(fft_size=fs, hop_size=ss, win_length=wl, compress_factor=compress_factor,
-                                         weight_mag=weight_mag, weight_com=weight_com, weight_pha=weight_pha)]
+                                         weight_lmag=weight_lmag, weight_conv=weight_conv, weight_comp=weight_comp, weight_pha=weight_pha)]
 
     def forward(self, x, y):
         total_loss = 0.0
@@ -100,17 +101,16 @@ def pesq_loss(clean, noisy, sr=16000):
         pesq_score = pesq(sr, clean, noisy, "wb")
     except:
         # error can happen due to silent period
-        pesq_score = -0.5
+        pesq_score = -1
     return pesq_score
 
 
-def batch_pesq(clean, noisy, workers=10, normalize=True):
-    pesq_score = Parallel(n_jobs=workers)(
-        delayed(pesq_loss)(c, n) for c, n in zip(clean, noisy)
-    )
+def batch_pesq(clean, noisy, workers=10):
+    pesq_score = Parallel(n_jobs=workers)(delayed(pesq_loss)(c, n) for c, n in zip(clean, noisy))
     pesq_score = np.array(pesq_score)
-    if normalize:
-        pesq_score = (pesq_score + 0.5) / 5
+    if -1 in pesq_score:
+        return None
+    pesq_score = (pesq_score - 1) / 3.5
     return torch.FloatTensor(pesq_score)
 
 
@@ -123,7 +123,8 @@ class MetricGAN_Loss(torch.nn.Module):
                  compress_factor=1.0, 
                  weight_gen=1.0,
                  weight_disc=1.0, 
-                 pesq_workers=10
+                 pesq_workers=10,
+                 use_torch_pesq=False
                  ):
         super().__init__()
         self.name = "MetricGAN_Loss"
@@ -135,26 +136,30 @@ class MetricGAN_Loss(torch.nn.Module):
         self.weight_gen = weight_gen
         self.weight_disc = weight_disc
         self.pesq_workers = pesq_workers
+        self.use_torch_pesq = use_torch_pesq
+        self.torch_pesq = None
+        if self.use_torch_pesq:
+            self.torch_pesq = PesqLoss(factor=1.0, sample_rate=16000)
 
     def calculate_disc_loss(self, x, y):
         batch_size = x.shape[0]
 
-        x_list = list(x.squeeze(1).detach().cpu().numpy())
-        y_list = list(y.squeeze(1).detach().cpu().numpy())
-
-        pesq_score = batch_pesq(y_list, x_list, workers=self.pesq_workers)
-        
-        x, y = x.squeeze(1), y.squeeze(1)
-            
-        # x = pad_stft_input(x, self.fft_size, self.hop_size)
-        # y = pad_stft_input(y, self.fft_size, self.hop_size)
-
-        x_mag, _, _ = mag_pha_stft(x, self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
-        y_mag, _, _ = mag_pha_stft(y, self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
-        x_mag = x_mag.unsqueeze(1)
-        y_mag = y_mag.unsqueeze(1)
+        if self.use_torch_pesq:
+            self.torch_pesq.to(x.device)
+            pesq_score = self.torch_pesq.mos(ref=y.squeeze(1), deg=x.squeeze(1))
+            pesq_score = (pesq_score - 1.08) / 4.999
+            pesq_score = pesq_score.type(torch.FloatTensor)
+        else:
+            x_list = list(x.squeeze(1).detach().cpu().numpy())
+            y_list = list(y.squeeze(1).detach().cpu().numpy())
+            pesq_score = batch_pesq(y_list, x_list, workers=self.pesq_workers)
         
         if pesq_score is not None:
+            x_mag, _, _ = mag_pha_stft(x.squeeze(1), self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
+            y_mag, _, _ = mag_pha_stft(y.squeeze(1), self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
+            x_mag = x_mag.unsqueeze(1)
+            y_mag = y_mag.unsqueeze(1)
+
             predict_enhance_metric = self.discriminator(y_mag, x_mag)
             predict_max_metric = self.discriminator(y_mag, y_mag)
             discriminator_loss = F.mse_loss(
@@ -169,14 +174,9 @@ class MetricGAN_Loss(torch.nn.Module):
 
     def forward(self, x, y):
         batch_size = x.shape[0]
-
-        x, y = x.squeeze(1), y.squeeze(1)
-
-        # x = pad_stft_input(x, self.fft_size, self.hop_size).squeeze(1)
-        # y = pad_stft_input(y, self.fft_size, self.hop_size).squeeze(1)
-
-        x_mag, _, _ = mag_pha_stft(x, self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
-        y_mag, _, _ = mag_pha_stft(y, self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
+    
+        x_mag, _, _ = mag_pha_stft(x.squeeze(1), self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
+        y_mag, _, _ = mag_pha_stft(y.squeeze(1), self.fft_size, self.hop_size, self.win_length, compress_factor=self.compress_factor, center=True)
 
         predict_fake_metric = self.discriminator(y_mag.unsqueeze(1), x_mag.unsqueeze(1))
 
@@ -232,7 +232,7 @@ class CompositeLoss(torch.nn.Module):
             loss = loss_fn(x, y)
             loss_all += loss
             loss_dict[loss_name] = loss
-        
+
         return loss_all, loss_dict
     
     def forward_disc_loss(self, x, y):

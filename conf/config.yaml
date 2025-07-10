@@ -5,12 +5,7 @@ defaults:
 
 # Dataset related
 sampling_rate: 16000
-segment: 40000
-stride: 32000
-
-shift: 16000
-shift_same: false
-remix: true
+segment: 32000
 
 batch_size: 4
 batch_size_valid: 1
@@ -23,30 +18,24 @@ loss:
   l1_loss:
     weight: 1
   multispectral_loss:
-    weight_mag: 0.5
-    weight_com: 0.5
+    weight_lmag: 0.5
+    weight_conv: 0.5
+    weight_comp: 0
     weight_pha: 0.5
     fft_sizes: [1024, 2048, 512]
     hop_sizes: [120, 240, 50]
     win_lengths: [600, 1200, 240]
     compress_factor: 0.3
-  # spectral_loss:
-  #   weight_mag: 0.5
-  #   weight_com: 0.5
-  #   weight_pha: 0.5
-  #   compress_factor: 0.3
-  #   fft_size: 400
-  #   hop_size: 100
-  #   win_length: 400
-  # metricgan_loss:
-  #   weight_disc: 10
-  #   weight_gen: 1
-  #   ndf: 16
-  #   fft_size: 400
-  #   hop_size: 100
-  #   win_length: 400
-  #   compress_factor: 0.3
-  #   pesq_workers: 10
+  metricgan_loss:
+    weight_disc: 10
+    weight_gen: 1
+    ndf: 16
+    fft_size: 400
+    hop_size: 100
+    win_length: 400
+    compress_factor: 0.3
+    pesq_workers: 8
+    use_torch_pesq: false
 
 # Optimization related
 lr: 5e-4

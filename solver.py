@@ -12,7 +12,6 @@ from enhance import enhance
 from evaluate import evaluate
 from utils import bold, copy_state, pull_metric, swap_state, LogProgress
 from criteria import CompositeLoss, batch_pesq
-from data import Remix, Shift
 
 class Solver(object):
     def __init__(
@@ -44,15 +43,6 @@ class Solver(object):
         self.scheduler = scheduler
         self.scheduler_disc = scheduler_disc
         self.logger = logger
-
-        # Data augmentation
-        augment = []
-        if args.remix:
-            augment.append(Remix())
-        if args.shift:
-            augment.append(Shift(args.shift, args.shift_same))
-        self.augment = torch.nn.Sequential(*augment)
-
 
         # Basic config
         self.device = device or torch.device(args.device)
@@ -249,9 +239,15 @@ class Solver(object):
                     bold(f'Train Summary | End of Epoch {epoch + 1} | '
                          f'Time {time.time() - start:.2f}s | Train Loss {train_loss:.5f}'))
             
+            if self.is_distributed:
+                dist.barrier()
+                
             # Optionally run validation if va_loader is present
             self.model.eval()
             
+
+            # Running validation with PESQ can cause errors in a DDP environment, 
+            # so validation is not performed using DDP.
             if self.rank == 0:
                 self.logger.info('-' * 70)
                 self.logger.info('Validation...')
@@ -269,10 +265,6 @@ class Solver(object):
                 if self.scheduler is not None:
                     self.logger.info(f"Learning rate: {self.scheduler.get_last_lr()[0]:.6f}")
                     self.writer.add_scalar("train/Learning_Rate", self.scheduler.get_last_lr()[0], epoch)
-            
-            # If distributed, we can synchronize here so that next epoch starts together
-            if self.is_distributed:
-                dist.barrier()
                 
             # rank=0 handles model saving and test set evaluation
             if self.rank == 0:
@@ -352,20 +344,14 @@ class Solver(object):
             
             noisy = noisy.to(self.device)
             clean = clean.to(self.device)
-            # Move inputs to the correct device
-            if not valid:
-                sources = torch.stack([noisy - clean, clean])
-                sources = self.augment(sources)
-                noise, clean = sources
-                noisy = noise + clean
-
             clean_hat = self.model(noisy)
             
             # Compute loss
             loss_all, loss_dict = self.loss(clean_hat, clean)
             
             # For distributed training, we do all_reduce
-            if self.is_distributed:
+            # Here, we only do all_reduce for training, not for validation
+            if self.is_distributed and not valid:
                 dist.all_reduce(loss_all)
                 loss_all = loss_all / self.world_size
             
@@ -397,12 +383,13 @@ class Solver(object):
                 
                 if self.discriminator is not None:
                     disc_loss = self.loss.forward_disc_loss(clean_hat.detach(), clean)
-                    self.optim_disc.zero_grad()
-                    disc_loss.backward()
-                    self.optim_disc.step()
-                    if self.rank == 0:
-                        logprog.append(**{f'Discriminator_Loss': format(disc_loss, "4.5f")})
-                        self.writer.add_scalar(f"train/Discriminator_Loss", disc_loss, epoch * len(data_loader) + i)
+                    if disc_loss is not None:
+                        self.optim_disc.zero_grad()
+                        disc_loss.backward()
+                        self.optim_disc.step()
+                        if self.rank == 0:
+                            logprog.append(**{f'Discriminator_Loss': format(disc_loss, "4.5f")})
+                            self.writer.add_scalar(f"train/Discriminator_Loss", disc_loss, epoch * len(data_loader) + i)
                 
             else:
                 # Validation step (rank=0 logs)
@@ -414,9 +401,9 @@ class Solver(object):
                             logprog.append(**{f"{key}_Loss": format(value, "4.5f")})
                     self.writer.add_scalar("valid/Loss", loss_all.item(), epoch * len(data_loader) + i)
         
-        if self.scheduler is not None:
+        if self.scheduler is not None and not valid:
             self.scheduler.step()
-        if self.scheduler_disc is not None:
+        if self.scheduler_disc is not None and not valid:
             self.scheduler_disc.step()
         
         # Return the average loss over the entire epoch
@@ -444,8 +431,7 @@ class Solver(object):
         pesq_score = batch_pesq(
             clean_list, 
             clean_hat_list, 
-            workers=10,
-            normalize=False
+            workers=8,
         )
 
         pesq_score = -pesq_score.mean().item()
