@@ -135,10 +135,29 @@ def test_ghostsenet():
     model_size_mb = (total_params) / (1024 * 1024)
     print(f"Model size: {model_size_mb:.2f} MB")
 
+def test_ghostsenetv3():
+    from models.ghostsenetv3 import GhostSEnetV3
+    model = GhostSEnetV3(
+        fft_len=400,
+        dense_channel=64,
+        sigmoid_beta=2,
+        num_tsblock=4,
+        ratio=2
+    )
+    x = dict(
+        magnitude=torch.randn(1, 201, 400),
+        phase=torch.randn(1, 201, 400)
+    )
+    total_params = sum(p.numel() for p in model.parameters())
+    model_size_mb = (total_params) / (1024 * 1024)
+    print(f"Model size: {model_size_mb:.2f} MB")
+
+
 if __name__ == "__main__":
     # test_ghostsenet()
     # test_ghostsenetv2()
     # test_dataset()
     # test_compute_metrics()
-    test_ghostsenet()
+    # test_ghostsenet()
     # test_primeknet()
+    test_ghostsenetv3()
