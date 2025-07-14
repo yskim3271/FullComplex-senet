@@ -10,7 +10,7 @@ param:
   dense_channel: 64
   sigmoid_beta: 2.0
   num_tsblock: 4
-  dense_mode: original
-  mask_mode: original
-  phase_mode: original
+  dense_mode: attn
+  mask_mode: attn
+  phase_mode: attn
 

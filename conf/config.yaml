@@ -6,34 +6,29 @@ defaults:
 # Dataset related
 sampling_rate: 16000
 segment: 32000
+fft_size: 400
+hop_size: 100
+win_length: 400
+compress_factor: 0.3
 
 batch_size: 4
 batch_size_valid: 1
 epochs: 200
 
-eval_every: 100  # compute test metrics every so epochs
+eval_every: 100 # compute test metrics every so epochs
 
 # Loss related
 loss:
-  l1_loss:
-    weight: 1
-  multispectral_loss:
-    weight_lmag: 0.5
-    weight_conv: 0.5
-    weight_comp: 0
-    weight_pha: 0.5
-    fft_sizes: [1024, 2048, 512]
-    hop_sizes: [120, 240, 50]
-    win_lengths: [600, 1200, 240]
-    compress_factor: 0.3
+  time_loss: 0.2
+  phase_loss: 0.3
+  magnitude_loss: 0.9
+  complex_loss: 0.1
+  consistency_loss: 1
+
   metricgan_loss:
-    weight_disc: 10
-    weight_gen: 1
+    weight_disc: 1
+    weight_gen: 0.05
     ndf: 16
-    fft_size: 400
-    hop_size: 100
-    win_length: 400
-    compress_factor: 0.3
     pesq_workers: 8
     use_torch_pesq: true
 
@@ -55,7 +50,7 @@ ddp:
 
 checkpoint: true
 checkpoint_file: checkpoint.th
-continue_from:
+continue_from: /home/user114/yunsik/GhostSENet/outputs/2025-07-14_04-48-17
 samples_dir: samples
 log_dir: tensorbd
 

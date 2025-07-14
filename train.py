@@ -18,6 +18,8 @@ from models.discriminator import MetricGAN_Discriminator
 from data import VoiceBankDataset, StepSampler
 from solver import Solver
 
+# torch.backends.cudnn.benchmark = True
+
 def kill_child_processes():
     """kill child processes"""
     current_process = psutil.Process(os.getpid())
@@ -84,7 +86,7 @@ def run(rank, world_size, args):
     model_class = getattr(module, model_class)
     
     model = model_class(**model_args.param)
-    model = model.to(args.device)
+    model = model.to(device)
 
     if rank == 0:
         # Calculate and log the total number of parameters and model size
@@ -151,10 +153,15 @@ def run(rank, world_size, args):
         datapair_list=trainset,
         sampling_rate=args.sampling_rate,
         segment=args.segment, 
+        fft_len=args.fft_size,
+        hop_size=args.hop_size,
+        win_size=args.win_length,
+        compress_factor=args.compress_factor,
+        type="train"
     )
     
     # Set up distributed sampler
-    tr_sampler = DistributedSampler(tr_dataset) if world_size > 1 else None
+    tr_sampler = DistributedSampler(tr_dataset) if  world_size > 1 else None
     tr_loader = DataLoader(
         dataset=tr_dataset,
         batch_size=args.batch_size,
@@ -163,40 +170,56 @@ def run(rank, world_size, args):
         num_workers=args.num_workers,
         pin_memory=True
     )
-        
+    
+
+    # We only use validation, test set on rank 0
     # Set up validation and test dataset and dataloader
-    va_dataset = VoiceBankDataset(
-        datapair_list=testset,
-        sampling_rate=args.sampling_rate
-    )
-    va_loader = DataLoader(
-        dataset=va_dataset, 
-        batch_size=1,
-        num_workers=args.num_workers,
-        pin_memory=True
-    )
-    
-    ev_dataset = VoiceBankDataset(
-        datapair_list=testset,
-        sampling_rate=args.sampling_rate,
-        with_id=True
-    )
-    
-    ev_loader = DataLoader(
-        dataset=ev_dataset, 
-        batch_size=1,
-        num_workers=args.num_workers,
-        pin_memory=True
-    )
-    
-    tt_loader = DataLoader(
-        dataset=ev_dataset, 
-        batch_size=1,
-        sampler=StepSampler(len(ev_dataset), 100),
-        num_workers=args.num_workers,
-        pin_memory=True
-    )
+    if rank == 0:
+        va_dataset = VoiceBankDataset(
+            datapair_list=testset,
+            sampling_rate=args.sampling_rate,
+            fft_len=args.fft_size,
+            hop_size=args.hop_size,
+            win_size=args.win_length,
+            compress_factor=args.compress_factor,
+            type="valid"
+        )
+        va_loader = DataLoader(
+            dataset=va_dataset, 
+            batch_size=1,
+            num_workers=args.num_workers,
+            pin_memory=True
+        )
         
+        ev_dataset = VoiceBankDataset(
+            datapair_list=testset,
+            sampling_rate=args.sampling_rate,
+            fft_len=args.fft_size,
+            hop_size=args.hop_size,
+            win_size=args.win_length,
+            compress_factor=args.compress_factor,
+            with_id=True,
+            type="test"
+        )
+        
+        ev_loader = DataLoader(
+            dataset=ev_dataset, 
+            batch_size=1,
+            num_workers=args.num_workers,
+            pin_memory=True
+        )
+        
+        tt_loader = DataLoader(
+            dataset=ev_dataset, 
+            batch_size=1,
+            sampler=StepSampler(len(ev_dataset), 100),
+            num_workers=args.num_workers,
+            pin_memory=True
+        )
+    else:
+        va_loader = None
+        ev_loader = None
+        tt_loader = None
     
     dataloader = {
         "tr_loader": tr_loader,

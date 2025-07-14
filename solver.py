@@ -10,6 +10,7 @@ from pathlib import Path
 
 from enhance import enhance
 from evaluate import evaluate
+from data import mag_pha_istft
 from utils import bold, copy_state, pull_metric, swap_state, LogProgress
 from criteria import CompositeLoss, batch_pesq
 
@@ -54,7 +55,14 @@ class Solver(object):
         self.loss = args.loss
         self.clip_grad_norm = args.clip_grad_norm
         
-        self.loss = CompositeLoss(args.loss, self.discriminator).to(self.device)
+        self.loss = CompositeLoss(
+            args=args.loss,
+            fft_size=args.fft_size,
+            hop_size=args.hop_size,
+            win_length=args.win_length,
+            compress_factor=args.compress_factor,
+            discriminator=self.discriminator
+        ).to(self.device)
 
         self.eval_every = args.eval_every   # interval for evaluation
         self.validate_with_pesq = args.validate_with_pesq
@@ -245,17 +253,12 @@ class Solver(object):
             # Optionally run validation if va_loader is present
             self.model.eval()
             
-
             # Running validation with PESQ can cause errors in a DDP environment, 
             # so validation is not performed using DDP.
             if self.rank == 0:
                 self.logger.info('-' * 70)
                 self.logger.info('Validation...')
-                with torch.no_grad():
-                    if self.validate_with_pesq:
-                        valid_loss = self._validate_with_pesq(epoch)
-                    else:
-                        valid_loss = self._run_one_epoch(epoch, valid=True)
+                valid_loss = self._run_validation(epoch)
             
             if self.rank == 0:
                 self.logger.info(
@@ -273,10 +276,7 @@ class Solver(object):
                 
                 # Update best_state if we got a new best validation loss
                 if valid_loss == best_loss:
-                    if self.validate_with_pesq:
-                        self.logger.info(bold('New best valid PESQ score %.4f'), (-valid_loss))
-                    else:
-                        self.logger.info(bold('New best valid loss %.4f'), valid_loss)
+                    self.logger.info(bold('New best valid PESQ score %.4f'), (-valid_loss))
                     self.best_state = {'model': copy_state(self.model.module.state_dict() if self.is_distributed else self.model.state_dict())}
 
                 # Evaluate on ev_loader (test set) every eval_every epochs (or last epoch)
@@ -320,17 +320,16 @@ class Solver(object):
                     self.logger.debug("Checkpoint saved to %s", self.checkpoint_file.resolve())
                     
 
-    def _run_one_epoch(self, epoch, valid=False):
-        """Run one epoch of training or validation."""
+    def _run_one_epoch(self, epoch):
+        """Run one epoch of training."""
         total_loss = 0.0
-        data_loader = self.tr_loader if not valid else self.va_loader
+        data_loader = self.tr_loader
         
          # If the sampler has a set_epoch method, call it to shuffle data consistently across ranks
         if hasattr(data_loader, 'sampler') and hasattr(data_loader.sampler, 'set_epoch'):
             data_loader.sampler.set_epoch(epoch)
 
-        label = ["Train", "Valid"][valid]
-        name = label + f" | Epoch {epoch + 1}"
+        name = "Train" + f" | Epoch {epoch + 1}"
         
         # For rank=0, use a LogProgress, else just iterate the data
         if self.rank == 0:
@@ -341,80 +340,68 @@ class Solver(object):
         for i, data in enumerate(logprog):
             # Unpack data
             noisy, clean = data
+            noisy = {key: value.to(self.device) for key, value in noisy.items()}
+            clean = {key: value.to(self.device) for key, value in clean.items()}
             
-            noisy = noisy.to(self.device)
-            clean = clean.to(self.device)
             clean_hat = self.model(noisy)
             
             # Compute loss
             loss_all, loss_dict = self.loss(clean_hat, clean)
             
             # For distributed training, we do all_reduce
-            # Here, we only do all_reduce for training, not for validation
-            if self.is_distributed and not valid:
+            if self.is_distributed:
                 dist.all_reduce(loss_all)
                 loss_all = loss_all / self.world_size
             
             total_loss += loss_all.item()
 
-            if not valid:
-                # Training step
-                self.optim.zero_grad()
+            # Training step
+            self.optim.zero_grad()
+            
+            if self.rank == 0:
+                # Log current losses in the progress bar
+                for j, (key, value) in enumerate(loss_dict.items()):
+                    if j == 0:
+                        logprog.update(**{f"{key}_Loss": format(value, "4.5f")})
+                    else:
+                        logprog.append(**{f"{key}_Loss": format(value, "4.5f")})
+                    self.writer.add_scalar(f"train/{key}_Loss", value, epoch * len(data_loader) + i)
+                self.writer.add_scalar("train/Loss", loss_all.item(), epoch * len(data_loader) + i)
+            
+            # Backpropagation
+            loss_all.backward()
+            
+            # Gradient clipping
+            if self.clip_grad_norm:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad_norm)
                 
-                if self.rank == 0:
-                    # Log current losses in the progress bar
-                    for j, (key, value) in enumerate(loss_dict.items()):
-                        if j == 0:
-                            logprog.update(**{f"{key}_Loss": format(value, "4.5f")})
-                        else:
-                            logprog.append(**{f"{key}_Loss": format(value, "4.5f")})
-                        self.writer.add_scalar(f"train/{key}_Loss", value, epoch * len(data_loader) + i)
-                    self.writer.add_scalar("train/Loss", loss_all.item(), epoch * len(data_loader) + i)
+            # Optimizer step
+            self.optim.step()
+            
+            if self.discriminator is not None:
+                disc_loss = self.loss.forward_disc_loss(clean_hat, clean)
+                if disc_loss is not None:
+                    self.optim_disc.zero_grad()
+                    disc_loss.backward()
+                    self.optim_disc.step()
+                    if self.rank == 0:
+                        logprog.append(**{f'Discriminator_Loss': format(disc_loss, "4.5f")})
+                        self.writer.add_scalar(f"train/Discriminator_Loss", disc_loss, epoch * len(data_loader) + i)
                 
-                # Backpropagation
-                loss_all.backward()
-                
-                # Gradient clipping
-                if self.clip_grad_norm:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad_norm)
-                    
-                # Optimizer step
-                self.optim.step()
-                
-                if self.discriminator is not None:
-                    disc_loss = self.loss.forward_disc_loss(clean_hat.detach(), clean)
-                    if disc_loss is not None:
-                        self.optim_disc.zero_grad()
-                        disc_loss.backward()
-                        self.optim_disc.step()
-                        if self.rank == 0:
-                            logprog.append(**{f'Discriminator_Loss': format(disc_loss, "4.5f")})
-                            self.writer.add_scalar(f"train/Discriminator_Loss", disc_loss, epoch * len(data_loader) + i)
-                
-            else:
-                # Validation step (rank=0 logs)
-                if self.rank == 0:
-                    for j, (key, value) in enumerate(loss_dict.items()):
-                        if j == 0:
-                            logprog.update(**{f"{key}_Loss": format(value, "4.5f")})
-                        else:
-                            logprog.append(**{f"{key}_Loss": format(value, "4.5f")})
-                    self.writer.add_scalar("valid/Loss", loss_all.item(), epoch * len(data_loader) + i)
         
-        if self.scheduler is not None and not valid:
+        if self.scheduler is not None:
             self.scheduler.step()
-        if self.scheduler_disc is not None and not valid:
+        if self.scheduler_disc is not None:
             self.scheduler_disc.step()
         
         # Return the average loss over the entire epoch
         return total_loss / len(data_loader)
     
 
-    def _validate_with_pesq(self, epoch):
+    def _run_validation(self, epoch):
         """Run validation and compute PESQ."""
         data_loader = self.va_loader
-        label = "Valid with PESQ"
-        name = label + f" | Epoch {epoch + 1}"
+        name = "Validation" + f" | Epoch {epoch + 1}"
         
         logprog = LogProgress(self.logger, data_loader, updates=self.num_prints, name=name)
         
@@ -423,9 +410,31 @@ class Solver(object):
         with torch.no_grad():
             for data in logprog:
                 noisy, clean = data
+                noisy = {key: value.to(self.device) for key, value in noisy.items()}
+                clean = {key: value.to(self.device) for key, value in clean.items()}
                 
-                clean_hat = self.model(noisy.to(self.device))
-                clean_list.append(clean.squeeze().detach().cpu().numpy())
+                length = noisy["length"]
+                # [1, Segement_numb, F, T] -> [Segement_numb, F, T]
+                noisy["magnitude"] = noisy["magnitude"].squeeze(0)
+                noisy["phase"] = noisy["phase"].squeeze(0)
+                clean_hat = self.model(noisy) 
+                clean_hat = mag_pha_istft(clean_hat["magnitude"], 
+                                          clean_hat["phase"], 
+                                          self.args.fft_size, self.args.hop_size, self.args.win_length, self.args.compress_factor)
+
+                
+                num_segments, segment_size = clean_hat.shape
+
+                if length <= segment_size:
+                    clean_hat = clean_hat[:, :length]
+                else:
+                    clean_hat = clean_hat.view(1, -1)
+                    clean_hat = torch.cat([
+                        clean_hat[:, :(num_segments - 2) * segment_size + length % segment_size],
+                        clean_hat[:, -segment_size:]
+                    ], dim=1)
+
+                clean_list.append(clean["wav"].squeeze().detach().cpu().numpy())
                 clean_hat_list.append(clean_hat.squeeze().detach().cpu().numpy())
                 
         pesq_score = batch_pesq(
@@ -435,10 +444,13 @@ class Solver(object):
             normalize=False
         )
 
-        pesq_score = -pesq_score.mean().item()
-
-        self.logger.info(f"PESQ Score: {pesq_score:.5f}")
-        self.writer.add_scalar("valid/PESQ", pesq_score, epoch * len(data_loader))
+        if pesq_score is not None:
+            pesq_score = -pesq_score.mean().item()
+            self.logger.info(f"PESQ Score: {pesq_score:.5f}")
+            self.writer.add_scalar("valid/PESQ", pesq_score, epoch * len(data_loader))
+        else:
+            self.logger.info("PESQ Score is None")
+            pesq_score = 0.0
         
         return pesq_score
         

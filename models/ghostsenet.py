@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from einops.layers.torch import Rearrange
 import math
-from stft import mag_pha_stft, mag_pha_istft, pad_stft_input
+from data import mag_pha_stft, mag_pha_istft
 
 def get_padding(kernel_size, dilation=1):
     return int((kernel_size*dilation - dilation)/2)
@@ -406,12 +406,8 @@ class GhostSEnet(nn.Module):
     def forward(self, inputs):
 
         in_len = inputs.size(-1)
-        padded_inputs = pad_stft_input(inputs, 
-                                       n_fft=self.fft_len,
-                                       hop_size=self.hop_len
-                                       ).squeeze(1)
 
-        mag, pha, com = mag_pha_stft(padded_inputs, 
+        mag, pha, com = mag_pha_stft(inputs, 
                                      n_fft=self.fft_len,
                                      hop_size=self.hop_len,
                                      win_size=self.win_len,

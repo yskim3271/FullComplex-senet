@@ -6,6 +6,7 @@ import torchaudio
 
 from matplotlib import pyplot as plt
 from utils import LogProgress, mel_spectrogram
+from data import mag_pha_istft
 
 def save_wavs(wavs_dict, filepath, sr=16_000):
     for i, (key, wav) in enumerate(wavs_dict.items()):
@@ -43,14 +44,15 @@ def enhance(args, model, data_loader, logger, epoch=None, local_out_dir="samples
     
     with torch.no_grad():
         for data in iterator:
-            # Get batch data (batch, channel, time)
             noisy, clean, id = data
-                        
-            clean_hat = model(noisy.to(args.device))
+            noisy = {key: value.to(args.device) for key, value in noisy.items()}
+
+            clean_hat = model(noisy)
             
-            clean = clean.squeeze(1).cpu()
-            noisy = noisy.squeeze(1).cpu()
-            clean_hat = clean_hat.squeeze(1).cpu()
+            clean = clean["wav"].squeeze(1).detach().cpu()
+            noisy = noisy["wav"].squeeze(1).detach().cpu()
+            clean_hat = mag_pha_istft(clean_hat["magnitude"], clean_hat["phase"], args.fft_size, args.hop_size, args.win_length, args.compress_factor)
+            clean_hat = clean_hat.squeeze(1).detach().cpu()
                         
             wavs_dict = {
                 "noisy": noisy,

@@ -5,7 +5,7 @@ from einops.layers.torch import Rearrange
 import math
 from torchvision.ops.deform_conv import DeformConv2d
 
-from stft import mag_pha_stft, mag_pha_istft, pad_stft_input
+from data import mag_pha_to_complex
 
 def get_padding(kernel_size, dilation=1):
     return int((kernel_size*dilation - dilation)/2)
@@ -377,21 +377,14 @@ class TS_BLOCK(nn.Module):
 
 class PrimeKnet(nn.Module):
     def __init__(self, 
-                 win_len, 
-                 hop_len, 
-                 fft_len, 
-                 dense_channel, 
-                 sigmoid_beta, 
-                 compress_factor,
+                 fft_len=400,
+                 dense_channel=64,
+                 sigmoid_beta=2.0,
                  num_tsblock=4
                  ):
         super(PrimeKnet, self).__init__()
-        self.win_len = win_len
-        self.hop_len = hop_len
         self.fft_len = fft_len
         self.dense_channel = dense_channel
-        self.sigmoid_beta = sigmoid_beta
-        self.compress_factor = compress_factor
         self.num_tsblock = num_tsblock
         self.dense_encoder = DenseEncoder(dense_channel, in_channel=2)
         self.LKFCAnet = nn.ModuleList([])
@@ -401,24 +394,15 @@ class PrimeKnet(nn.Module):
         self.phase_decoder = PhaseDecoder(dense_channel, out_channel=1)
 
     def forward(self, inputs):
+        # Input shape: [B, F, T]
+        mag = inputs["magnitude"]
+        pha = inputs["phase"]
 
-        in_len = inputs.size(-1)
-        padded_inputs = pad_stft_input(inputs, 
-                                       n_fft=self.fft_len,
-                                       hop_size=self.hop_len
-                                       ).squeeze(1)
+        mag = mag.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
+        pha = pha.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
 
-        mag, pha, com = mag_pha_stft(padded_inputs, 
-                                     n_fft=self.fft_len,
-                                     hop_size=self.hop_len,
-                                     win_size=self.win_len,
-                                     compress_factor=self.compress_factor,
-                                     center=False
-                                     )
-
-        mag = mag.unsqueeze(-1).permute(0, 3, 2, 1) # [B, 1, T, F]
-        pha = pha.unsqueeze(-1).permute(0, 3, 2, 1) # [B, 1, T, F]
         x = torch.cat((mag, pha), dim=1) # [B, 2, T, F]
+
         x = self.dense_encoder(x)
 
         for i in range(self.num_tsblock):
@@ -427,15 +411,12 @@ class PrimeKnet(nn.Module):
         denoised_mag = (mag * self.mask_decoder(x)).permute(0, 3, 2, 1).squeeze(-1)
         denoised_pha = self.phase_decoder(x).permute(0, 3, 2, 1).squeeze(-1)
         
-        output_wav = mag_pha_istft(denoised_mag, denoised_pha,
-                                   n_fft=self.fft_len,
-                                   hop_size=self.hop_len,
-                                   win_size=self.win_len,
-                                   compress_factor=self.compress_factor,
-                                   center=True
-                                   )
+        denoised_com = mag_pha_to_complex(denoised_mag, denoised_pha)
         
-        output_wav = output_wav.unsqueeze(1)
-        output_wav = output_wav[..., :in_len]
+        outputs = {
+            "magnitude": denoised_mag,
+            "phase": denoised_pha,
+            "complex": denoised_com,
+        }
 
-        return output_wav
+        return outputs
