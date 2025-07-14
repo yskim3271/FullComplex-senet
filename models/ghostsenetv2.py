@@ -402,14 +402,14 @@ class TS_BLOCK(nn.Module):
         x = x.view(b, t, f, c).permute(0, 3, 1, 2)
         return x
 
-class GhostSEnet(nn.Module):
+class GhostSEnetV2(nn.Module):
     def __init__(self, 
                  fft_len, 
                  channel, 
                  sigmoid_beta, 
                  num_tsblock=4
                  ):
-        super(GhostSEnet, self).__init__()
+        super(GhostSEnetV2, self).__init__()
         self.fft_len = fft_len
         self.channel = channel
         self.sigmoid_beta = sigmoid_beta

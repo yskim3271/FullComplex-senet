@@ -99,8 +99,8 @@ def test_primeknet():
     y = model(x)
 
 def test_ghostsenetv2():
-    from models.ghostsenetv2 import GhostSEnet
-    model = GhostSEnet(
+    from models.ghostsenetv2 import GhostSEnetV2
+    model = GhostSEnetV2(
         fft_len=400,
         channel=64,
         sigmoid_beta=2,
@@ -116,12 +116,27 @@ def test_ghostsenetv2():
     model_size_mb = (total_params) / (1024 * 1024)
     print(f"Model size: {model_size_mb:.2f} MB")
 
-
+def test_ghostsenet():
+    from models.ghostsenet import GhostSEnet
+    model = GhostSEnet(
+        fft_len=400,
+        dense_channel=64,
+        sigmoid_beta=2,
+        num_tsblock=4
+    )
+    x = dict(
+        magnitude=torch.randn(1, 201, 400),
+        phase=torch.randn(1, 201, 400)
+    )
+    y = model(x)
+    total_params = sum(p.numel() for p in model.parameters())
+    model_size_mb = (total_params) / (1024 * 1024)
+    print(f"Model size: {model_size_mb:.2f} MB")
 
 if __name__ == "__main__":
     # test_ghostsenet()
     # test_ghostsenetv2()
     # test_dataset()
     # test_compute_metrics()
-    test_ghostsenetv2()
+    test_ghostsenet()
     # test_primeknet()

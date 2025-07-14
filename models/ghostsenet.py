@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from einops.layers.torch import Rearrange
 import math
-from data import mag_pha_stft, mag_pha_istft
+from data import mag_pha_to_complex
 
 def get_padding(kernel_size, dilation=1):
     return int((kernel_size*dilation - dilation)/2)
@@ -176,136 +176,62 @@ class LearnableSigmoid_2d(nn.Module):
     def forward(self, x):
         return self.beta * torch.sigmoid(self.slope * x)
 
-class GhostModule(nn.Module):
-    def __init__(self, inp, oup, kernel_size=(1,1), ratio=2, dw_size=3, stride=1, dilation=1, relu=True):
-        super(GhostModule, self).__init__()
-        self.oup = oup
-        init_channels = math.ceil(oup / ratio)
-        new_channels = init_channels*(ratio-1)
-
-        self.primary_conv = nn.Sequential(
-            nn.Conv2d(in_channels=inp, 
-                      out_channels=init_channels, 
-                      kernel_size=kernel_size, 
-                      stride=stride, 
-                      dilation=(dilation, 1),
-                      padding=get_padding_2d(kernel_size, dilation=(dilation, 1)), 
-                      bias=False),
-            nn.BatchNorm2d(init_channels),
-            nn.ReLU(inplace=True) if relu else nn.Sequential(),
-        )
-
-        self.cheap_operation = nn.Sequential(
-            nn.Conv2d(in_channels=init_channels, 
-                      out_channels=new_channels, 
-                      kernel_size=dw_size, 
-                      stride=1, 
-                      padding=dw_size//2, 
-                      groups=init_channels, 
-                      bias=False),
-            nn.BatchNorm2d(new_channels),
-            nn.ReLU(inplace=True) if relu else nn.Sequential(),
-        )
-
-    def forward(self, x):
-        x1 = self.primary_conv(x)
-        x2 = self.cheap_operation(x1)
-        out = torch.cat([x1,x2], dim=1)
-        return out[:,:self.oup,:,:]
     
-class GhostBottleneck(nn.Module):
-    def __init__(self, 
-                 in_channels,
-                 out_channels,
-                 kernel_size,
-                 stride=1,
-                 ):
-        super(GhostBottleneck, self).__init__()
 
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.stride = stride
-
-        #Point-wise expansion
-        self.ghost1= GhostModule(in_channels, out_channels, kernel_size=(1,1), stride=1, relu=True)
-        
-        if stride > 1:
-            self.conv_dw = nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=stride,
-                                     padding=get_padding_2d(kernel_size), groups=out_channels, bias=False)
-            self.bn_dw = nn.BatchNorm2d(out_channels)
-        
-        self.ghost2 = GhostModule(out_channels, out_channels, kernel_size=(1,1), stride=1, relu=False)
-        
-        if (in_channels == out_channels) and (stride == 1):
-            self.shortcut = nn.Sequential()
-        else:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, in_channels, kernel_size=kernel_size, stride=stride, 
-                          padding=get_padding_2d(kernel_size), groups=in_channels, bias=False),
-                nn.BatchNorm2d(in_channels),
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False),
-                nn.BatchNorm2d(out_channels)
-            )
-                    
-    def forward(self, x):
-        residual = x
-        
-        x = self.ghost1(x)
-        
-        if self.stride > 1:
-            x = self.conv_dw(x)
-            x = self.bn_dw(x)
-
-        x = self.ghost2(x)
-            
-        x += self.shortcut(residual)
-        return x
-
-
-class GhostDilatedDenseBlock(nn.Module):
-    def __init__(self, dense_channel, kernel_size, depth):
-        super(GhostDilatedDenseBlock, self).__init__()
+class Ghost_DDB(nn.Module):
+    def __init__(self, dense_channel, kernel_size=(3, 3), depth=4, ratio=2):
+        super(Ghost_DDB, self).__init__()
         self.dense_channel = dense_channel
-        self.kernel_size = kernel_size
-        self.depth = depth  
+        self.init_channel = math.ceil(dense_channel / ratio)
+        self.cheap_channel = (ratio - 1) * self.init_channel
+        self.depth = depth
         self.dense_block = nn.ModuleList([])
+        self.cheap_block = nn.ModuleList([])
         for i in range(depth):
-            dilation = 2 ** i
-            dense_conv = GhostModule(dense_channel*(i+1), 
-                                     dense_channel, 
-                                     kernel_size=kernel_size, 
-                                     ratio=2, 
-                                     dw_size=3, 
-                                     stride=1, 
-                                     dilation=dilation, 
-                                     relu=True)
+            dil = 2 ** i
+            dense_conv = nn.Sequential(
+                nn.Conv2d(self.dense_channel*(i+1), self.init_channel, kernel_size, dilation=(dil, 1),
+                          padding=get_padding_2d(kernel_size, dilation=(dil, 1)), bias=True),
+                nn.InstanceNorm2d(self.init_channel, affine=True),
+                nn.PReLU(self.init_channel)
+            )
             self.dense_block.append(dense_conv)
+            cheap_conv = nn.Sequential(
+                nn.Conv2d(self.init_channel, self.cheap_channel, kernel_size=kernel_size,
+                          stride=1, padding=get_padding_2d(kernel_size), groups=self.init_channel, bias=True),
+                nn.InstanceNorm2d(self.cheap_channel, affine=True),
+                nn.PReLU(self.cheap_channel)
+            )
+            self.cheap_block.append(cheap_conv)
 
     def forward(self, x):
         skip = x
         for i in range(self.depth):
-            x = self.dense_block[i](skip)
-            skip = torch.cat([x, skip], dim=1)
+            x1 = self.dense_block[i](skip)
+            x2 = self.cheap_block[i](x1)
+            skip = torch.cat([x1, x2, skip], dim=1)
         return x
 
 class DenseEncoder(nn.Module):
     def __init__(self, dense_channel, in_channel):
         super(DenseEncoder, self).__init__()
         self.dense_channel = dense_channel
-        self.dense_conv_1 = GhostModule(in_channel, dense_channel, kernel_size=(1, 1), ratio=2, dw_size=3, stride=1, relu=True)
-        self.dense_block = GhostDilatedDenseBlock(dense_channel, kernel_size=(3, 3), depth=4)
-        self.dense_conv_2 = nn.Sequential(
-            nn.Conv2d(dense_channel, dense_channel, kernel_size = (1, 3), stride= (1, 2)),
+        self.dense_conv_1 = nn.Sequential(
+            nn.Conv2d(in_channel, dense_channel, (1, 1)),
             nn.InstanceNorm2d(dense_channel, affine=True),
-            nn.PReLU(dense_channel)
-        )
+            nn.PReLU(dense_channel))
+
+        self.dense_block = Ghost_DDB(dense_channel, depth=4, ratio=2) # [b, h.dense_channel, ndim_time, h.n_fft//2+1]
+
+        self.dense_conv_2 = nn.Sequential(
+            nn.Conv2d(dense_channel, dense_channel, (1, 3), (1, 2)),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel))
 
     def forward(self, x):
-        x = self.dense_conv_1(x)
-        x = self.dense_block(x)
-        x = self.dense_conv_2(x)
-
+        x = self.dense_conv_1(x)  # [b, 64, T, F]
+        x = self.dense_block(x)   # [b, 64, T, F]
+        x = self.dense_conv_2(x)  # [b, 64, T, F//2]
         return x
 
 
@@ -317,7 +243,7 @@ class MaskDecoder(nn.Module):
                  out_channel=1):
         super(MaskDecoder, self).__init__()
         self.n_fft = n_fft
-        self.dense_block = GhostDilatedDenseBlock(dense_channel, kernel_size=(3, 3), depth=4)
+        self.dense_block = Ghost_DDB(dense_channel, kernel_size=(3, 3), depth=4, ratio=2)
         self.mask_conv = nn.Sequential(
             nn.ConvTranspose2d(dense_channel, dense_channel, (1, 3), (1, 2)),
             # nn.SPConvTranspose2d(dense_channel, dense_channel, (1, 3), 2),
@@ -341,7 +267,7 @@ class PhaseDecoder(nn.Module):
                  dense_channel, 
                  out_channel=1):
         super(PhaseDecoder, self).__init__()
-        self.dense_block = GhostDilatedDenseBlock(dense_channel, kernel_size=(3, 3), depth=4)
+        self.dense_block = Ghost_DDB(dense_channel, kernel_size=(3, 3), depth=4, ratio=2)
         self.phase_conv = nn.Sequential(
             nn.ConvTranspose2d(dense_channel, dense_channel, (1, 3), (1, 2)),
             # nn.SPConvTranspose2d(dense_channel, dense_channel, (1, 3), 2),
@@ -380,21 +306,15 @@ class TS_BLOCK(nn.Module):
 
 class GhostSEnet(nn.Module):
     def __init__(self, 
-                 win_len, 
-                 hop_len, 
                  fft_len, 
                  dense_channel, 
                  sigmoid_beta, 
-                 compress_factor,
                  num_tsblock=4
                  ):
         super(GhostSEnet, self).__init__()
-        self.win_len = win_len
-        self.hop_len = hop_len
         self.fft_len = fft_len
         self.dense_channel = dense_channel
         self.sigmoid_beta = sigmoid_beta
-        self.compress_factor = compress_factor
         self.num_tsblock = num_tsblock
         self.dense_encoder = DenseEncoder(dense_channel, in_channel=2)
         self.LKFCAnet = nn.ModuleList([])
@@ -404,20 +324,15 @@ class GhostSEnet(nn.Module):
         self.phase_decoder = PhaseDecoder(dense_channel, out_channel=1)
 
     def forward(self, inputs):
+        # Input shape: [B, F, T]
+        mag = inputs["magnitude"]
+        pha = inputs["phase"]
 
-        in_len = inputs.size(-1)
+        mag = mag.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
+        pha = pha.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
 
-        mag, pha, com = mag_pha_stft(inputs, 
-                                     n_fft=self.fft_len,
-                                     hop_size=self.hop_len,
-                                     win_size=self.win_len,
-                                     compress_factor=self.compress_factor,
-                                     center=False
-                                     )
-
-        mag = mag.unsqueeze(-1).permute(0, 3, 2, 1) # [B, 1, T, F]
-        pha = pha.unsqueeze(-1).permute(0, 3, 2, 1) # [B, 1, T, F]
         x = torch.cat((mag, pha), dim=1) # [B, 2, T, F]
+
         x = self.dense_encoder(x)
 
         for i in range(self.num_tsblock):
@@ -426,15 +341,12 @@ class GhostSEnet(nn.Module):
         denoised_mag = (mag * self.mask_decoder(x)).permute(0, 3, 2, 1).squeeze(-1)
         denoised_pha = self.phase_decoder(x).permute(0, 3, 2, 1).squeeze(-1)
         
-        output_wav = mag_pha_istft(denoised_mag, denoised_pha,
-                                   n_fft=self.fft_len,
-                                   hop_size=self.hop_len,
-                                   win_size=self.win_len,
-                                   compress_factor=self.compress_factor,
-                                   center=True
-                                   )
+        denoised_com = mag_pha_to_complex(denoised_mag, denoised_pha)
         
-        output_wav = output_wav.unsqueeze(1)
-        output_wav = output_wav[..., :in_len]
+        outputs = {
+            "magnitude": denoised_mag,
+            "phase": denoised_pha,
+            "complex": denoised_com,
+        }
 
-        return output_wav
+        return outputs
