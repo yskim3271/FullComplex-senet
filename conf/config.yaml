@@ -50,7 +50,7 @@ ddp:
 
 checkpoint: true
 checkpoint_file: checkpoint.th
-continue_from: /home/user114/yunsik/GhostSENet/outputs/2025-07-14_04-48-17
+continue_from: 
 samples_dir: samples
 log_dir: tensorbd
 

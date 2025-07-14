@@ -1,42 +1,7 @@
-
-from models.ghostsenet import GhostSEnet
-from models.ghostsenetv2 import GhostSEnet as GhostSEnetV2
 import torch
 import torch.nn.functional as F
 import torchaudio
 
-def test_ghostsenet():
-    
-    model = GhostSEnet(
-        win_len=400,
-        hop_len=100,
-        fft_len=400,
-        dense_channel=64,
-        sigmoid_beta=2,
-        compress_factor=0.3,
-        num_tsblock=4
-    )
-
-    x = torch.randn(1, 16000)
-
-    y = model(x)
-    print(y.shape)
-    
-def test_ghostsenetv2():
-    model = GhostSEnetV2(
-        win_len=400,
-        hop_len=100,
-        fft_len=400,
-        dense_channel=64,
-        sigmoid_beta=2,
-        compress_factor=0.3,
-        num_tsblock=4
-    )
-
-    x = torch.randn(1, 16000)
-
-    y = model(x)
-    print(y.shape)
 
 def test_dataset():
     import datasets
@@ -119,8 +84,44 @@ def test_compute_metrics():
     metrics = compute_metrics(clean, enhanced, Fs=16000, path=False)
     print(metrics)
 
+def test_primeknet():
+    from models.primeKnet import PrimeKnet
+    model = PrimeKnet(
+        fft_len=400,
+        dense_channel=64,
+        sigmoid_beta=2,
+        num_tsblock=4
+    )
+    x = dict(
+        magnitude=torch.randn(1, 201, 400),
+        phase=torch.randn(1, 201, 400)
+    )
+    y = model(x)
+
+def test_ghostsenetv2():
+    from models.ghostsenetv2 import GhostSEnet
+    model = GhostSEnet(
+        fft_len=400,
+        channel=64,
+        sigmoid_beta=2,
+        num_tsblock=4
+    )
+    x = dict(
+        magnitude=torch.randn(1, 201, 400),
+        phase=torch.randn(1, 201, 400)
+    )
+
+    y = model(x)
+    total_params = sum(p.numel() for p in model.parameters())
+    model_size_mb = (total_params) / (1024 * 1024)
+    print(f"Model size: {model_size_mb:.2f} MB")
+
+
+
 if __name__ == "__main__":
     # test_ghostsenet()
     # test_ghostsenetv2()
     # test_dataset()
-    test_compute_metrics()
+    # test_compute_metrics()
+    test_ghostsenetv2()
+    # test_primeknet()

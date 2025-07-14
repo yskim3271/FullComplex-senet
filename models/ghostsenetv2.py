@@ -176,6 +176,33 @@ class LearnableSigmoid_2d(nn.Module):
     def forward(self, x):
         return self.beta * torch.sigmoid(self.slope * x)
 
+
+class SPConvTranspose2d(nn.Module):
+    def __init__(self, 
+                 in_channels, 
+                 out_channels, 
+                 kernel_size, 
+                 r=1,
+                 padding=0
+                 ):
+        super(SPConvTranspose2d, self).__init__()
+        self.pad1 = nn.ConstantPad2d((1, 1, 0, 0), value=0.)
+        self.out_channels = out_channels
+        self.conv = nn.Conv2d(in_channels, out_channels * r, kernel_size=kernel_size, stride=(1, 1))
+        self.r = r
+        self.padding = padding
+
+    def forward(self, x):
+        x = self.pad1(x)
+        out = self.conv(x)
+        batch_size, nchannels, H, W = out.shape
+        out = out.view((batch_size, self.r, nchannels // self.r, H, W))
+        out = out.permute(0, 2, 3, 4, 1)
+        out = out.contiguous().view((batch_size, nchannels // self.r, H, -1))
+        out = out[..., :-self.padding]
+        return out
+    
+
 def hard_sigmoid(x, inplace: bool = False):
     if inplace:
         return x.add_(3.).clamp_(0., 6.).div_(6.)
@@ -218,7 +245,7 @@ class SqueezeExcite(nn.Module):
         return x  
 
 class GhostModuleV2(nn.Module):
-    def __init__(self, inp, oup, kernel_size=(1, 1), ratio=2, dw_size=(3, 3), stride=(1, 1), relu=True, mode=None,args=None):
+    def __init__(self, inp, oup, kernel_size=(1, 1), ratio=2, dw_size=(3, 3), stride=(1, 1), relu=True, mode=None):
         super(GhostModuleV2, self).__init__()
         self.mode=mode
         self.gate_fn=nn.Sigmoid()
@@ -253,11 +280,11 @@ class GhostModuleV2(nn.Module):
             ) 
             self.short_conv = nn.Sequential( 
                 nn.Conv2d(inp, oup, kernel_size, stride, get_padding_2d(kernel_size), bias=False),
-                nn.LayerNorm(oup),
+                nn.InstanceNorm2d(oup),
                 nn.Conv2d(oup, oup, kernel_size=(1,5), stride=1, padding=(0,2), groups=oup,bias=False),
-                nn.LayerNorm(oup),
+                nn.InstanceNorm2d(oup),
                 nn.Conv2d(oup, oup, kernel_size=(5,1), stride=1, padding=(2,0), groups=oup,bias=False),
-                nn.LayerNorm(oup),
+                nn.InstanceNorm2d(oup),
             ) 
       
     def forward(self, x):
@@ -275,62 +302,58 @@ class GhostModuleV2(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, in_channel, channels=64, kernel_size=(3, 3)):
+    def __init__(self, in_channel, out_channel, kernel_size=(3, 3), mode=('original', 'original')):
         super(Encoder, self).__init__()
 
-        self.conv_stem = nn.Conv2d(in_channel, channels[0], kernel_size=1, stride=1, padding=0)
-        self.norm1 = nn.InstanceNorm2d(channels[0], affine=True)
-        self.act1 = nn.PReLU(channels[0])
+        self.ghost1 = GhostModuleV2(in_channel, out_channel, kernel_size=kernel_size, mode=mode[0])
+        self.norm1 = nn.InstanceNorm2d(out_channel, affine=True)
+        self.act1 = nn.PReLU(out_channel)
 
-        self.ghost1 = GhostModuleV2(channels[0], channels[1], kernel_size=kernel_size, mode='original')
-        self.norm2 = nn.InstanceNorm2d(channels[1], affine=True)
-        self.act2 = nn.PReLU(channels[1])
+        self.conv_dw = nn.Conv2d(out_channel, out_channel, kernel_size=(1, 3), stride=(1, 2), padding=(0, 1))
+        self.norm2 = nn.InstanceNorm2d(out_channel, affine=True)
+        self.act2 = nn.PReLU(out_channel)
 
-        self.conv_dw = nn.Conv2d(channels[1], channels[1], kernel_size=(1, 3), stride=(1, 2))
-        self.norm3 = nn.InstanceNorm2d(channels[1], affine=True)
-        self.act3 = nn.PReLU(channels[1])
-
-        self.ghost2 = GhostModuleV2(channels[1], channels[1], kernel_size=kernel_size, mode='original')
-        self.norm4 = nn.InstanceNorm2d(channels[1], affine=True)
-        self.act4 = nn.PReLU(channels[1])
+        self.ghost2 = GhostModuleV2(out_channel, out_channel, kernel_size=kernel_size, mode=mode[1])
+        self.norm3 = nn.InstanceNorm2d(out_channel, affine=True)
+        self.act3 = nn.PReLU(out_channel)
 
     def forward(self, x):
-        x = self.conv_stem(x)
+        x = self.ghost1(x)
         x = self.norm1(x)
         x = self.act1(x)
 
-        x = self.ghost1(x)
+        x = self.conv_dw(x)
         x = self.norm2(x)
         x = self.act2(x)
 
-        x = self.conv_dw(x)
-        
-
+        x = self.ghost2(x)
+        x = self.norm3(x)
+        x = self.act3(x)
+    
         return x
 
 
 class MaskDecoder(nn.Module):
     def __init__(self, 
-                 dense_channel,
+                 in_channel,
                  n_fft,
                  sigmoid_beta,
                  out_channel=1,
                  mode='original'):
         super(MaskDecoder, self).__init__()
         self.n_fft = n_fft
-        self.dense_block = GhostDilatedDenseBlock(dense_channel, kernel_size=(3, 3), depth=4, mode=mode)
+        self.ghost = GhostModuleV2(in_channel, in_channel, kernel_size=(3, 3), mode=mode)
         self.mask_conv = nn.Sequential(
-            nn.ConvTranspose2d(dense_channel, dense_channel, (1, 3), (1, 2)),
-            # nn.SPConvTranspose2d(dense_channel, dense_channel, (1, 3), 2),
-            nn.Conv2d(dense_channel, out_channel, (1, 1)),
+            SPConvTranspose2d(in_channel, in_channel, kernel_size=(1, 3), r=2, padding=1),
+            nn.Conv2d(in_channel, out_channel, (1, 1)),
             nn.InstanceNorm2d(out_channel, affine=True),
             nn.PReLU(out_channel),
             nn.Conv2d(out_channel, out_channel, (1, 1))
         )
         self.lsigmoid = LearnableSigmoid_2d(n_fft//2+1, beta=sigmoid_beta)
-
+    
     def forward(self, x):
-        x = self.dense_block(x)
+        x = self.ghost(x)
         x = self.mask_conv(x)
         x = x.permute(0, 3, 2, 1).squeeze(-1)
         x = self.lsigmoid(x).permute(0, 2, 1).unsqueeze(1)
@@ -339,22 +362,21 @@ class MaskDecoder(nn.Module):
 
 class PhaseDecoder(nn.Module):
     def __init__(self, 
-                 dense_channel, 
+                 in_channel, 
                  out_channel=1,
                  mode='original'):
         super(PhaseDecoder, self).__init__()
-        self.dense_block = GhostDilatedDenseBlock(dense_channel, kernel_size=(3, 3), depth=4, mode=mode)
+        self.ghost = GhostModuleV2(in_channel, in_channel, kernel_size=(3, 3), mode=mode)
         self.phase_conv = nn.Sequential(
-            nn.ConvTranspose2d(dense_channel, dense_channel, (1, 3), (1, 2)),
-            # nn.SPConvTranspose2d(dense_channel, dense_channel, (1, 3), 2),
-            nn.InstanceNorm2d(dense_channel, affine=True),
-            nn.PReLU(dense_channel)
+            SPConvTranspose2d(in_channel, in_channel, kernel_size=(1, 3), r=2, padding=1),
+            nn.InstanceNorm2d(in_channel, affine=True),
+            nn.PReLU(in_channel)
         )
-        self.phase_conv_r = nn.Conv2d(dense_channel, out_channel, (1, 1))
-        self.phase_conv_i = nn.Conv2d(dense_channel, out_channel, (1, 1))
+        self.phase_conv_r = nn.Conv2d(in_channel, out_channel, (1, 1))
+        self.phase_conv_i = nn.Conv2d(in_channel, out_channel, (1, 1))
 
     def forward(self, x):
-        x = self.dense_block(x)
+        x = self.ghost(x)
         x = self.phase_conv(x)
         x_r = self.phase_conv_r(x)
         x_i = self.phase_conv_i(x)
@@ -382,31 +404,30 @@ class TS_BLOCK(nn.Module):
 
 class GhostSEnet(nn.Module):
     def __init__(self, 
-                 win_len, 
-                 hop_len, 
                  fft_len, 
-                 dense_channel, 
+                 channel, 
                  sigmoid_beta, 
-                 compress_factor,
-                 num_tsblock=4,
-                 dense_mode='original',
-                 mask_mode='original',
-                 phase_mode='original'
+                 num_tsblock=4
                  ):
         super(GhostSEnet, self).__init__()
-        self.win_len = win_len
-        self.hop_len = hop_len
         self.fft_len = fft_len
-        self.dense_channel = dense_channel
+        self.channel = channel
         self.sigmoid_beta = sigmoid_beta
-        self.compress_factor = compress_factor
         self.num_tsblock = num_tsblock
-        self.dense_encoder = DenseEncoder(dense_channel, in_channel=2, mode=dense_mode)
+
+        self.conv_stem = nn.Sequential(
+            nn.Conv2d(2, channel, kernel_size=(1, 1)),
+            nn.InstanceNorm2d(channel, affine=True),
+            nn.PReLU(channel)
+        )
+
+        self.encoder = Encoder(channel, channel, kernel_size=(3, 3), mode=('original', 'original'))
+
         self.LKFCAnet = nn.ModuleList([])
         for i in range(num_tsblock):
-            self.LKFCAnet.append(TS_BLOCK(dense_channel))
-        self.mask_decoder = MaskDecoder(dense_channel, fft_len, sigmoid_beta, out_channel=1, mode=mask_mode)
-        self.phase_decoder = PhaseDecoder(dense_channel, out_channel=1, mode=phase_mode)
+            self.LKFCAnet.append(TS_BLOCK(channel))
+        self.mask_decoder = MaskDecoder(channel, fft_len, sigmoid_beta, out_channel=1, mode='attn')
+        self.phase_decoder = PhaseDecoder(channel, out_channel=1, mode='attn')
 
     def forward(self, inputs):
 
@@ -417,9 +438,12 @@ class GhostSEnet(nn.Module):
         pha = pha.unsqueeze(-1).permute(0, 3, 2, 1) # [B, 1, T, F]
         x = torch.cat((mag, pha), dim=1) # [B, 2, T, F]
 
-        x = self.dense_encoder(x)
+        x = self.conv_stem(x)
+        x = self.encoder(x)
+
         for i in range(self.num_tsblock):
             x = self.LKFCAnet[i](x)
+
         denoised_mag = (mag * self.mask_decoder(x)).permute(0, 3, 2, 1).squeeze(-1)
         denoised_pha = self.phase_decoder(x).permute(0, 3, 2, 1).squeeze(-1)
         denoised_com = mag_pha_to_complex(denoised_mag, denoised_pha)

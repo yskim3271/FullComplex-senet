@@ -18,7 +18,7 @@ from models.discriminator import MetricGAN_Discriminator
 from data import VoiceBankDataset, StepSampler
 from solver import Solver
 
-# torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.benchmark = True
 
 def kill_child_processes():
     """kill child processes"""
