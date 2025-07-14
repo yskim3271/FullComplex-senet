@@ -198,7 +198,7 @@ class Ghost_DDB(nn.Module):
             self.dense_block.append(dense_conv)
             cheap_conv = nn.Sequential(
                 nn.Conv2d(self.init_channel, self.cheap_channel, kernel_size=kernel_size,
-                          stride=1, padding=get_padding_2d(kernel_size), groups=self.init_channel, bias=True),
+                          stride=1, padding=get_padding_2d(kernel_size), groups=self.init_channel, bias=False),
                 nn.InstanceNorm2d(self.cheap_channel, affine=True),
                 nn.PReLU(self.cheap_channel)
             )
@@ -209,11 +209,12 @@ class Ghost_DDB(nn.Module):
         for i in range(self.depth):
             x1 = self.dense_block[i](skip)
             x2 = self.cheap_block[i](x1)
-            skip = torch.cat([x1, x2, skip], dim=1)
+            x = torch.cat([x1, x2], dim=1)
+            skip = torch.cat([x, skip], dim=1)
         return x
 
 class DenseEncoder(nn.Module):
-    def __init__(self, dense_channel, in_channel):
+    def __init__(self, dense_channel, ratio=2, in_channel=2):
         super(DenseEncoder, self).__init__()
         self.dense_channel = dense_channel
         self.dense_conv_1 = nn.Sequential(
@@ -221,7 +222,7 @@ class DenseEncoder(nn.Module):
             nn.InstanceNorm2d(dense_channel, affine=True),
             nn.PReLU(dense_channel))
 
-        self.dense_block = Ghost_DDB(dense_channel, depth=4, ratio=2) # [b, h.dense_channel, ndim_time, h.n_fft//2+1]
+        self.dense_block = Ghost_DDB(dense_channel, depth=4, ratio=ratio) # [b, h.dense_channel, ndim_time, h.n_fft//2+1]
 
         self.dense_conv_2 = nn.Sequential(
             nn.Conv2d(dense_channel, dense_channel, (1, 3), (1, 2)),
@@ -264,10 +265,11 @@ class MaskDecoder(nn.Module):
 
 class PhaseDecoder(nn.Module):
     def __init__(self, 
-                 dense_channel, 
+                 dense_channel,
+                 ratio=2,
                  out_channel=1):
         super(PhaseDecoder, self).__init__()
-        self.dense_block = Ghost_DDB(dense_channel, kernel_size=(3, 3), depth=4, ratio=2)
+        self.dense_block = Ghost_DDB(dense_channel, kernel_size=(3, 3), depth=4, ratio=ratio)
         self.phase_conv = nn.Sequential(
             nn.ConvTranspose2d(dense_channel, dense_channel, (1, 3), (1, 2)),
             # nn.SPConvTranspose2d(dense_channel, dense_channel, (1, 3), 2),
@@ -308,7 +310,8 @@ class GhostSEnet(nn.Module):
     def __init__(self, 
                  fft_len, 
                  dense_channel, 
-                 sigmoid_beta, 
+                 sigmoid_beta,
+                 ratio=2, 
                  num_tsblock=4
                  ):
         super(GhostSEnet, self).__init__()
@@ -316,7 +319,7 @@ class GhostSEnet(nn.Module):
         self.dense_channel = dense_channel
         self.sigmoid_beta = sigmoid_beta
         self.num_tsblock = num_tsblock
-        self.dense_encoder = DenseEncoder(dense_channel, in_channel=2)
+        self.dense_encoder = DenseEncoder(dense_channel, ratio=ratio, in_channel=2)
         self.LKFCAnet = nn.ModuleList([])
         for i in range(num_tsblock):
             self.LKFCAnet.append(TS_BLOCK(dense_channel))

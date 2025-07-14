@@ -122,13 +122,15 @@ def test_ghostsenet():
         fft_len=400,
         dense_channel=64,
         sigmoid_beta=2,
-        num_tsblock=4
+        num_tsblock=4,
+        ratio=2
     )
     x = dict(
         magnitude=torch.randn(1, 201, 400),
         phase=torch.randn(1, 201, 400)
     )
     y = model(x)
+    print(model)
     total_params = sum(p.numel() for p in model.parameters())
     model_size_mb = (total_params) / (1024 * 1024)
     print(f"Model size: {model_size_mb:.2f} MB")
