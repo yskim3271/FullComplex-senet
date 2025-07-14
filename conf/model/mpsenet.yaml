@@ -1,6 +1,5 @@
 model_lib: mpsenet
 model_class: MPNet
-input_type: am
 
 param:
   fft_len: 400

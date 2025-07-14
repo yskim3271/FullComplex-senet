@@ -1,6 +1,5 @@
 model_lib: primeKnet
 model_class: PrimeKnet
-input_type: am
 
 param:
   fft_len: 400
