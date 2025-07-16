@@ -3,3 +3,4 @@ outputs/
 output*.log
 run.sh
 *.log
+test_inference_time.py

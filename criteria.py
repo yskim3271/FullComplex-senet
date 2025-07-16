@@ -159,7 +159,7 @@ class ConsistencyLoss(torch.nn.Module):
                                         compress_factor=self.compress_factor, 
                                         center=True)
 
-        return F.mse_loss(mag_con, y["magnitude"]) * 2 * self.weight
+        return F.mse_loss(mag_con, y["magnitude"]) * self.weight
 
 class CompositeLoss(torch.nn.Module):
     def __init__(self, args, fft_size=400, hop_size=100, win_length=400, compress_factor=1.0, discriminator=None):

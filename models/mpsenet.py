@@ -224,18 +224,18 @@ class MPNet(nn.Module):
                  dense_channel=64,
                  sigmoid_beta=2.0,
                  numb_attention_heads=4,
-                 num_tsblocks=4
+                 num_tsblock=4
                  ):
         super(MPNet, self).__init__()
         self.fft_len = fft_len
         self.dense_channel = dense_channel
         self.sigmoid_beta = sigmoid_beta
         self.numb_attention_heads = numb_attention_heads
-        self.num_tscblocks = num_tsblocks
+        self.num_tscblocks = num_tsblock
         self.dense_encoder = DenseEncoder(dense_channel=dense_channel, in_channel=2)
 
         self.TSTransformer = nn.ModuleList([])
-        for i in range(num_tsblocks):
+        for i in range(num_tsblock):
             self.TSTransformer.append(TSTransformerBlock(dense_channel, numb_attention_heads=numb_attention_heads))
 
         self.mask_decoder = MaskDecoder(fft_len=fft_len, 

@@ -6,5 +6,5 @@ param:
   dense_channel: 64
   sigmoid_beta: 2.0
   numb_attention_heads: 4
-  num_tsblocks: 4
+  num_tsblock: 4
 

@@ -19,11 +19,10 @@ eval_every: 100 # compute test metrics every so epochs
 
 # Loss related
 loss:
-  time_loss: 0.2
   phase_loss: 0.3
   magnitude_loss: 0.9
   complex_loss: 0.1
-  consistency_loss: 1
+  consistency_loss: 0.1
 
   metricgan_loss:
     weight_disc: 1
