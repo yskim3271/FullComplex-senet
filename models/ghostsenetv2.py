@@ -288,15 +288,15 @@ class TS_BLOCK(nn.Module):
     def __init__(self, dense_channel):
         super(TS_BLOCK, self).__init__()
         self.dense_channel = dense_channel
-        self.conv_time = nn.Conv2d(dense_channel, dense_channel, kernel_size=(5, 1), stride=1, padding=(2, 0), groups=dense_channel, bias=False)
-        self.conv_freq = nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 5), stride=1, padding=(0, 2), groups=dense_channel, bias=False)
+        self.conv_time = nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 5), stride=1, padding=(0, 2), groups=dense_channel, bias=False)
+        self.conv_freq = nn.Conv2d(dense_channel, dense_channel, kernel_size=(5, 1), stride=1, padding=(2, 0), groups=dense_channel, bias=False)
         self.time = GPFCA(dense_channel)
         self.freq = GPFCA(dense_channel)
         self.beta = nn.Parameter(torch.zeros((1, 1, 1, dense_channel)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, 1, 1, dense_channel)), requires_grad=True)
     def forward(self, x):
         b, c, t, f = x.size()
-        x_time = self.conv_time(x) # [B, C, T, F]
+        x_time = self.conv_time(x)
         x = x.permute(0, 3, 2, 1).contiguous().view(b*f, t, c) # [B, C, T, F] -> [B, F, T, C] -> [B*F, T, C]
         x_time = x_time.permute(0, 3, 2, 1).contiguous().view(b*f, t, c) # [B, C, T, F] -> [B, F, T, C] -> [B*F, T, C]
         
@@ -313,7 +313,7 @@ class TS_BLOCK(nn.Module):
 
 
 
-class GhostSEnetV2(nn.Module):
+class GhostSEnetV6(nn.Module):
     def __init__(self, 
                  fft_len, 
                  dense_channel, 
@@ -321,7 +321,7 @@ class GhostSEnetV2(nn.Module):
                  ratio=2, 
                  num_tsblock=4
                  ):
-        super(GhostSEnetV2, self).__init__()
+        super(GhostSEnetV6, self).__init__()
         self.fft_len = fft_len
         self.dense_channel = dense_channel
         self.sigmoid_beta = sigmoid_beta
