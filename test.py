@@ -107,9 +107,9 @@ def test_TFconv():
     print(f"y: {y}")
     print(f"weight: {conv.weight}")
 
-def test_primeknetv2():
-    from models.primeKnetv2 import PrimeKnetv2
-    model = PrimeKnetv2(
+def test_primeknetv3():
+    from models.primeKnetv3 import PrimeKnetv3
+    model = PrimeKnetv3(
         fft_len=400,
         dense_channel=64,
         sigmoid_beta=2,
@@ -130,4 +130,4 @@ if __name__ == "__main__":
     # test_ghostsenet()
     # test_primeknet()
     # test_TFconv()
-    test_primeknetv2()
+    test_primeknetv3()

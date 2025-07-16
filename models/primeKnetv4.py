@@ -236,18 +236,18 @@ class PhaseDecoder(nn.Module):
         x = torch.atan2(x_i, x_r)
         return x
 
-class DFC_AttentionModule(nn.Module):
+class GhostAttentionModule(nn.Module):
     def __init__(self, dense_channel):
-        super(DFC_AttentionModule, self).__init__()
+        super(GhostAttentionModule, self).__init__()
         self.dense_channel = dense_channel
         self.layer_norm = nn.GroupNorm(num_groups=1, num_channels=dense_channel)
         self.short_conv = nn.Sequential(
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 1), stride=1, padding=(0, 0), bias=False),
-            nn.GroupNorm(num_groups=1, num_channels=dense_channel),
+            nn.InstanceNorm2d(dense_channel, affine=True),
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 5), stride=1, padding=(0, 2), groups=dense_channel, bias=False),
-            nn.GroupNorm(num_groups=1, num_channels=dense_channel),
+            nn.InstanceNorm2d(dense_channel, affine=True),
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(5, 1), stride=1, padding=(2, 0), groups=dense_channel, bias=False),
-            nn.GroupNorm(num_groups=1, num_channels=dense_channel)
+            nn.InstanceNorm2d(dense_channel, affine=True)
         )
         self.sigmoid = nn.Sigmoid()
         self.se = SqueezeExcite(dense_channel, se_ratio=0.25)
@@ -265,23 +265,23 @@ class DFC_AttentionModule(nn.Module):
 class GGGFN(nn.Module):
     def __init__(self, dense_channel):
         super(GGGFN, self).__init__()
-        self.DFC_attention = DFC_AttentionModule(dense_channel)
+        self.ghost_attention1 = GhostAttentionModule(dense_channel)
         self.GCGFN_T = GCGFN(dense_channel)
-        self.DFC_attention2 = DFC_AttentionModule(dense_channel)
+        self.ghost_attention2 = GhostAttentionModule(dense_channel)
         self.GCGFN_F = GCGFN(dense_channel)
         self.beta = nn.Parameter(torch.zeros((1, dense_channel, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, dense_channel, 1)), requires_grad=True)
     
     def forward(self, x):
         
-        x = self.DFC_attention(x)
+        x = self.ghost_attention1(x)
         b, c, t, f = x.size()
         x = x.permute(0, 3, 1, 2).contiguous().view(b*f, c, t)
         x = self.GCGFN_T(x) + x * self.beta
 
         x = x.view(b, f, c, t).permute(0, 2, 3, 1).contiguous()
 
-        x = self.DFC_attention2(x)
+        x = self.ghost_attention2(x)
 
         x = x.permute(0, 2, 1, 3).contiguous().view(b*t, c, f)
         x = self.GCGFN_F(x) + x * self.gamma
