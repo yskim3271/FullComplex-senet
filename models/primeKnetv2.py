@@ -264,9 +264,9 @@ class GhostAttentionModule(nn.Module):
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(5, 1), stride=1, padding=(2, 0), groups=dense_channel, bias=False),
             nn.InstanceNorm2d(dense_channel, affine=True)
         )
-        self.sigmoid = LearnableSigmoid_2d(dense_channel, beta=1)
+        self.sigmoid = nn.Sigmoid()
         self.se = SqueezeExcite(dense_channel, se_ratio=0.25)
-        self.alpha = nn.Parameter(torch.zeros((1, 1, 1, dense_channel)), requires_grad=True)
+        self.alpha = nn.Parameter(torch.zeros((1, dense_channel, 1, 1)), requires_grad=True)
     
     def forward(self, x):
         x_shortcut = x.clone()
@@ -289,8 +289,8 @@ class GGGFN(nn.Module):
         self.GCGFN_T = GCGFN(dense_channel)
         self.ghost_attention2 = GhostAttentionModule(dense_channel)
         self.GCGFN_F = GCGFN(dense_channel)
-        self.beta = nn.Parameter(torch.zeros((1, 1, 1, dense_channel)), requires_grad=True)
-        self.gamma = nn.Parameter(torch.zeros((1, 1, 1, dense_channel)), requires_grad=True)
+        self.beta = nn.Parameter(torch.zeros((1, dense_channel, 1)), requires_grad=True)
+        self.gamma = nn.Parameter(torch.zeros((1, dense_channel, 1)), requires_grad=True)
     
     def forward(self, x):
         
