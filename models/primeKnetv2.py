@@ -284,7 +284,6 @@ class GhostAttentionModule(nn.Module):
 class GGGFN(nn.Module):
     def __init__(self, dense_channel):
         super(GGGFN, self).__init__()
-        
         self.ghost_attention1 = GhostAttentionModule(dense_channel)
         self.GCGFN_T = GCGFN(dense_channel)
         self.ghost_attention2 = GhostAttentionModule(dense_channel)
