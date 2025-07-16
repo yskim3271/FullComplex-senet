@@ -157,7 +157,8 @@ def run(rank, world_size, args):
         hop_size=args.hop_size,
         win_size=args.win_length,
         compress_factor=args.compress_factor,
-        type="train"
+        type="train",
+        use_pcs400=args.use_pcs400
     )
     
     # Set up distributed sampler
@@ -182,7 +183,8 @@ def run(rank, world_size, args):
             hop_size=args.hop_size,
             win_size=args.win_length,
             compress_factor=args.compress_factor,
-            type="valid"
+            type="valid",
+            use_pcs400=False
         )
         va_loader = DataLoader(
             dataset=va_dataset, 
@@ -199,7 +201,8 @@ def run(rank, world_size, args):
             win_size=args.win_length,
             compress_factor=args.compress_factor,
             with_id=True,
-            type="test"
+            type="test",
+            use_pcs400=False
         )
         
         ev_loader = DataLoader(

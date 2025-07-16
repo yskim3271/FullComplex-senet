@@ -10,10 +10,11 @@ fft_size: 400
 hop_size: 100
 win_length: 400
 compress_factor: 0.3
+use_pcs400: false
 
 batch_size: 4
 batch_size_valid: 1
-epochs: 300
+epochs: 200
 
 eval_every: 100 # compute test metrics every so epochs
 

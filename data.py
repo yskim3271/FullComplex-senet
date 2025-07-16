@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import torch.utils.data
 import numpy as np
 import random
+from pcs400 import cal_pcs
 
 def mag_pha_stft(y, n_fft, hop_size, win_size, compress_factor=1.0, center=True, stack_dim=-1):
 
@@ -49,7 +50,8 @@ class VoiceBankDataset(torch.utils.data.Dataset):
                  win_size=400,
                  compress_factor=1.0,
                  with_id=False,
-                 type="train"
+                 type="train",
+                 use_pcs400=False
                  ):
         # Initialize variables with constructor arguments
         self.datapair_list = datapair_list
@@ -62,13 +64,15 @@ class VoiceBankDataset(torch.utils.data.Dataset):
         self.with_id = with_id
         assert type in ["train", "valid", "test"]
         self.type = type
+        self.use_pcs400 = use_pcs400
         # Prepare lists for noisy and clean audio arrays
         self.audio_pairs = []
         for item in self.datapair_list:
             noisy = item["noisy"]['array'].astype('float32')
             clean = item["clean"]['array'].astype('float32')
             id = item["id"]
-
+            if self.use_pcs400:
+                clean = cal_pcs(clean)
             norm_factor = np.sqrt(noisy.shape[-1] / np.sum(noisy ** 2.0))
             noisy = noisy * norm_factor
             clean = clean * norm_factor
