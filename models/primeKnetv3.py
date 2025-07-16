@@ -243,11 +243,8 @@ class DFC_AttentionModule(nn.Module):
         self.layer_norm = nn.GroupNorm(num_groups=1, num_channels=dense_channel)
         self.short_conv = nn.Sequential(
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 1), stride=1, padding=(0, 0), bias=False),
-            nn.GroupNorm(num_groups=1, num_channels=dense_channel),
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 5), stride=1, padding=(0, 2), groups=dense_channel, bias=False),
-            nn.GroupNorm(num_groups=1, num_channels=dense_channel),
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(5, 1), stride=1, padding=(2, 0), groups=dense_channel, bias=False),
-            nn.GroupNorm(num_groups=1, num_channels=dense_channel)
         )
         self.sigmoid = nn.Sigmoid()
         self.se = SqueezeExcite(dense_channel, se_ratio=0.25)

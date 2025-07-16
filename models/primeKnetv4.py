@@ -139,28 +139,39 @@ class LearnableSigmoid_2d(nn.Module):
         return self.beta * torch.sigmoid(self.slope * x)
 
 
-class DS_DDB(nn.Module):
-    def __init__(self, dense_channel, kernel_size=(3, 3), depth=4):
-        super(DS_DDB, self).__init__()
+class Ghost_DDB(nn.Module):
+    def __init__(self, dense_channel, kernel_size=(3, 3), depth=4, ratio=2):
+        super(Ghost_DDB, self).__init__()
         self.dense_channel = dense_channel
+        self.init_channel = math.ceil(dense_channel / ratio)
+        self.cheap_channel = (ratio - 1) * self.init_channel
         self.depth = depth
         self.dense_block = nn.ModuleList([])
+        self.cheap_block = nn.ModuleList([])
         for i in range(depth):
             dil = 2 ** i
             dense_conv = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size, dilation=(dil, 1),
-                          padding=get_padding_2d(kernel_size, dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-                nn.Conv2d(in_channels=dense_channel*(i+1), out_channels=dense_channel, kernel_size=1, padding=0, stride=1, groups=1,
-                          bias=True),
-                nn.InstanceNorm2d(dense_channel, affine=True),
-                nn.PReLU(dense_channel)
+                nn.Conv2d(self.dense_channel*(i+1), self.dense_channel*(i+1), kernel_size, dilation=(dil, 1),
+                          padding=get_padding_2d(kernel_size, dilation=(dil, 1)), groups=self.dense_channel*(i+1), bias=True),
+                nn.Conv2d(in_channels=self.dense_channel*(i+1), out_channels=self.init_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
+                nn.InstanceNorm2d(self.init_channel, affine=True),
+                nn.PReLU(self.init_channel)
             )
             self.dense_block.append(dense_conv)
+            cheap_conv = nn.Sequential(
+                nn.Conv2d(self.init_channel, self.cheap_channel, kernel_size=kernel_size,
+                          stride=1, padding=get_padding_2d(kernel_size), groups=self.init_channel, bias=False),
+                nn.InstanceNorm2d(self.cheap_channel, affine=True),
+                nn.PReLU(self.cheap_channel)
+            )
+            self.cheap_block.append(cheap_conv)
 
     def forward(self, x):
         skip = x
         for i in range(self.depth):
-            x = self.dense_block[i](skip)
+            x1 = self.dense_block[i](skip)
+            x2 = self.cheap_block[i](x1)
+            x = torch.cat([x1, x2], dim=1)
             skip = torch.cat([x, skip], dim=1)
         return x
 
@@ -174,7 +185,7 @@ class DenseEncoder(nn.Module):
             nn.InstanceNorm2d(dense_channel, affine=True),
             nn.PReLU(dense_channel))
 
-        self.dense_block = DS_DDB(dense_channel, depth=4) # [b, h.dense_channel, ndim_time, h.n_fft//2+1]
+        self.dense_block = Ghost_DDB(dense_channel, depth=4) # [b, h.dense_channel, ndim_time, h.n_fft//2+1]
 
         self.dense_conv_2 = nn.Sequential(
             nn.Conv2d(dense_channel, dense_channel, (1, 3), (1, 2)),
@@ -196,7 +207,7 @@ class MaskDecoder(nn.Module):
                  out_channel=1):
         super(MaskDecoder, self).__init__()
         self.n_fft = n_fft
-        self.dense_block = DS_DDB(dense_channel, depth=4)
+        self.dense_block = Ghost_DDB(dense_channel, depth=4)
         self.mask_conv = nn.Sequential(
             nn.ConvTranspose2d(dense_channel, dense_channel, (1, 3), (1, 2)),
             nn.Conv2d(dense_channel, out_channel, (1, 1)),
@@ -219,7 +230,7 @@ class PhaseDecoder(nn.Module):
                  dense_channel, 
                  out_channel=1):
         super(PhaseDecoder, self).__init__()
-        self.dense_block = DS_DDB(dense_channel, depth=4)
+        self.dense_block = Ghost_DDB(dense_channel, depth=4)
         self.phase_conv = nn.Sequential(
             nn.ConvTranspose2d(dense_channel, dense_channel, (1, 3), (1, 2)),
             nn.InstanceNorm2d(dense_channel, affine=True),
@@ -236,18 +247,15 @@ class PhaseDecoder(nn.Module):
         x = torch.atan2(x_i, x_r)
         return x
 
-class GhostAttentionModule(nn.Module):
+class DFC_AttentionModule(nn.Module):
     def __init__(self, dense_channel):
-        super(GhostAttentionModule, self).__init__()
+        super(DFC_AttentionModule, self).__init__()
         self.dense_channel = dense_channel
         self.layer_norm = nn.GroupNorm(num_groups=1, num_channels=dense_channel)
         self.short_conv = nn.Sequential(
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 1), stride=1, padding=(0, 0), bias=False),
-            nn.InstanceNorm2d(dense_channel, affine=True),
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 5), stride=1, padding=(0, 2), groups=dense_channel, bias=False),
-            nn.InstanceNorm2d(dense_channel, affine=True),
             nn.Conv2d(dense_channel, dense_channel, kernel_size=(5, 1), stride=1, padding=(2, 0), groups=dense_channel, bias=False),
-            nn.InstanceNorm2d(dense_channel, affine=True)
         )
         self.sigmoid = nn.Sigmoid()
         self.se = SqueezeExcite(dense_channel, se_ratio=0.25)
@@ -262,26 +270,27 @@ class GhostAttentionModule(nn.Module):
 
         return x
 
+
 class GGGFN(nn.Module):
     def __init__(self, dense_channel):
         super(GGGFN, self).__init__()
-        self.ghost_attention1 = GhostAttentionModule(dense_channel)
+        self.DFC_attention = DFC_AttentionModule(dense_channel)
         self.GCGFN_T = GCGFN(dense_channel)
-        self.ghost_attention2 = GhostAttentionModule(dense_channel)
+        self.DFC_attention2 = DFC_AttentionModule(dense_channel)
         self.GCGFN_F = GCGFN(dense_channel)
         self.beta = nn.Parameter(torch.zeros((1, dense_channel, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, dense_channel, 1)), requires_grad=True)
     
     def forward(self, x):
         
-        x = self.ghost_attention1(x)
+        x = self.DFC_attention(x)
         b, c, t, f = x.size()
         x = x.permute(0, 3, 1, 2).contiguous().view(b*f, c, t)
         x = self.GCGFN_T(x) + x * self.beta
 
         x = x.view(b, f, c, t).permute(0, 2, 3, 1).contiguous()
 
-        x = self.ghost_attention2(x)
+        x = self.DFC_attention2(x)
 
         x = x.permute(0, 2, 1, 3).contiguous().view(b*t, c, f)
         x = self.GCGFN_F(x) + x * self.gamma
@@ -303,14 +312,14 @@ class TS_BLOCK(nn.Module):
         return x
 
 
-class PrimeKnetv3(nn.Module):
+class PrimeKnetv4(nn.Module):
     def __init__(self, 
                  fft_len=400,
                  dense_channel=64,
                  sigmoid_beta=2.0,
                  num_tsblock=4
                  ):
-        super(PrimeKnetv3, self).__init__()
+        super(PrimeKnetv4, self).__init__()
         self.fft_len = fft_len
         self.dense_channel = dense_channel
         self.num_tsblock = num_tsblock
