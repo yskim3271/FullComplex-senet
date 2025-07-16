@@ -53,7 +53,7 @@ class LayerNorm1d(nn.Module):
         return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
 
 class LKFCA_Block(nn.Module):
-    def __init__(self, in_channels, DW_Expand=2, drop_out_rate=0.):
+    def __init__(self, in_channels, DW_Expand=2, FFN_Expand=1, drop_out_rate=0., type='sca', kernel_size=31):
         super().__init__()
 
         dw_channel = in_channels * DW_Expand
@@ -111,18 +111,22 @@ class GCGFN(nn.Module):
         # Multiscale Large Kernel Attention (replaced with 1D convolutions)
         self.LKA9 = nn.Sequential(
             nn.Conv1d(i_feats // 4, i_feats // 4, kernel_size=31, padding=get_padding(31), groups=i_feats // 4),
+
             nn.Conv1d(i_feats // 4, i_feats // 4, kernel_size=1))
 
         self.LKA7 = nn.Sequential(
             nn.Conv1d(i_feats // 4, i_feats // 4, kernel_size=23, padding=get_padding(23), groups=i_feats // 4),
+
             nn.Conv1d(i_feats // 4, i_feats // 4, kernel_size=1))
 
         self.LKA5 = nn.Sequential(
             nn.Conv1d(i_feats // 4, i_feats // 4, kernel_size=11, padding=get_padding(11), groups=i_feats // 4),
+
             nn.Conv1d(i_feats // 4, i_feats // 4, kernel_size=1))
 
         self.LKA3 = nn.Sequential(
             nn.Conv1d(i_feats // 4, i_feats // 4, kernel_size=3, padding=get_padding(3), groups=i_feats // 4),
+
             nn.Conv1d(i_feats // 4, i_feats // 4, kernel_size=1))
 
         self.X3 = nn.Conv1d(i_feats // 4, i_feats // 4, kernel_size=3, padding=get_padding(3), groups=i_feats // 4)
@@ -288,32 +292,22 @@ class TS_BLOCK(nn.Module):
     def __init__(self, dense_channel):
         super(TS_BLOCK, self).__init__()
         self.dense_channel = dense_channel
-        self.conv_time = nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 5), stride=1, padding=(0, 2), groups=dense_channel, bias=False)
-        self.conv_freq = nn.Conv2d(dense_channel, dense_channel, kernel_size=(5, 1), stride=1, padding=(2, 0), groups=dense_channel, bias=False)
         self.time = GPFCA(dense_channel)
         self.freq = GPFCA(dense_channel)
         self.beta = nn.Parameter(torch.zeros((1, 1, 1, dense_channel)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, 1, 1, dense_channel)), requires_grad=True)
     def forward(self, x):
         b, c, t, f = x.size()
-        x_time = self.conv_time(x)
-        x = x.permute(0, 3, 2, 1).contiguous().view(b*f, t, c) # [B, C, T, F] -> [B, F, T, C] -> [B*F, T, C]
-        x_time = x_time.permute(0, 3, 2, 1).contiguous().view(b*f, t, c) # [B, C, T, F] -> [B, F, T, C] -> [B*F, T, C]
+        x = x.permute(0, 3, 2, 1).contiguous().view(b*f, t, c)
         
-        x = self.time(x_time) + x * self.beta
+        x = self.time(x) + x * self.beta
+        x = x.view(b, f, t, c).permute(0, 2, 1, 3).contiguous().view(b*t, f, c)
 
-        x = x.view(b, f, t, c).permute(0, 3, 2, 1) # [B, F, T, C] -> [B, C, T, F]
-        x_freq = self.conv_freq(x)
-        x = x.permute(0, 2, 3, 1).contiguous().view(b*t, f, c) # [B, C, T, F] -> [B, T, F, C] -> [B*T, F, C]
-        x_freq = x_freq.permute(0, 2, 3, 1).contiguous().view(b*t, f, c) # [B, C, T, F] -> [B, T, F, C] -> [B*T, F, C]
+        x = self.freq(x) + x * self.gamma
+        x = x.view(b, t, f, c).permute(0, 3, 1, 2)
+        return x
 
-        x = self.freq(x_freq) + x * self.gamma
-        x = x.view(b, t, f, c).permute(0, 3, 1, 2) # [B, T, F, C] -> [B, C, T, F]
-        return x      
-
-
-
-class GhostSEnetV2(nn.Module):
+class GhostSEnetV3(nn.Module):
     def __init__(self, 
                  fft_len, 
                  dense_channel, 
@@ -321,7 +315,7 @@ class GhostSEnetV2(nn.Module):
                  ratio=2, 
                  num_tsblock=4
                  ):
-        super(GhostSEnetV2, self).__init__()
+        super(GhostSEnetV3, self).__init__()
         self.fft_len = fft_len
         self.dense_channel = dense_channel
         self.sigmoid_beta = sigmoid_beta
