@@ -10,7 +10,7 @@ fft_size: 400
 hop_size: 100
 win_length: 400
 compress_factor: 0.3
-use_pcs400: false
+use_pcs400: true
 
 batch_size: 4
 batch_size_valid: 1

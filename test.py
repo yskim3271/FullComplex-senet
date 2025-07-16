@@ -98,59 +98,14 @@ def test_primeknet():
     )
     y = model(x)
 
-def test_ghostsenetv2():
-    from models.ghostsenetv2 import GhostSEnetV2
-    model = GhostSEnetV2(
-        fft_len=400,
-        channel=64,
-        sigmoid_beta=2,
-        num_tsblock=4
-    )
-    x = dict(
-        magnitude=torch.randn(1, 201, 400),
-        phase=torch.randn(1, 201, 400)
-    )
-
-    y = model(x)
-    total_params = sum(p.numel() for p in model.parameters())
-    model_size_mb = (total_params) / (1024 * 1024)
-    print(f"Model size: {model_size_mb:.2f} MB")
-
-def test_ghostsenet():
-    from models.ghostsenet import GhostSEnet
-    model = GhostSEnet(
-        fft_len=400,
-        dense_channel=64,
-        sigmoid_beta=2,
-        num_tsblock=4,
-        ratio=2
-    )
-    x = dict(
-        magnitude=torch.randn(1, 201, 400),
-        phase=torch.randn(1, 201, 400)
-    )
-    y = model(x)
-    print(model)
-    total_params = sum(p.numel() for p in model.parameters())
-    model_size_mb = (total_params) / (1024 * 1024)
-    print(f"Model size: {model_size_mb:.2f} MB")
-
-def test_ghostsenetv3():
-    from models.ghostsenetv3 import GhostSEnetV3
-    model = GhostSEnetV3(
-        fft_len=400,
-        dense_channel=64,
-        sigmoid_beta=2,
-        num_tsblock=4,
-        ratio=2
-    )
-    x = dict(
-        magnitude=torch.randn(1, 201, 400),
-        phase=torch.randn(1, 201, 400)
-    )
-    total_params = sum(p.numel() for p in model.parameters())
-    model_size_mb = (total_params) / (1024 * 1024)
-    print(f"Model size: {model_size_mb:.2f} MB")
+def test_TFconv():
+    import torch.nn as nn
+    x = torch.randn(1, 1, 5, 5)
+    conv = nn.Conv2d(1, 1, kernel_size=(5, 1), stride=1, padding=(2, 0), groups=1, bias=False)
+    y = conv(x)
+    print(f"x: {x}")
+    print(f"y: {y}")
+    print(f"weight: {conv.weight}")
 
 
 
@@ -161,4 +116,4 @@ if __name__ == "__main__":
     # test_compute_metrics()
     # test_ghostsenet()
     # test_primeknet()
-    test_ghostsenetv3()
+    test_TFconv()

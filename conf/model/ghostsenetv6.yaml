@@ -1,5 +1,5 @@
-model_lib: ghostsenetv4
-model_class: GhostSEnetV4
+model_lib: ghostsenetv6
+model_class: GhostSEnetV6
 
 param:
   fft_len: 400
