@@ -1,9 +1,7 @@
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
-from einops.layers.torch import Rearrange
 import math
-from torchvision.ops.deform_conv import DeformConv2d
 
 from data import mag_pha_to_complex
 
