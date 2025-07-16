@@ -29,7 +29,7 @@ loss:
     weight_gen: 0.05
     ndf: 16
     pesq_workers: 8
-    use_torch_pesq: true
+    use_torch_pesq: false
 
 # Optimization related
 lr: 5e-4
