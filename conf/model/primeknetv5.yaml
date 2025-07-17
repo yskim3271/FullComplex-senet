@@ -1,0 +1,8 @@
+model_lib: primeKnetv5
+model_class: PrimeKnetv5
+
+param:
+  fft_len: 400
+  dense_channel: 64
+  sigmoid_beta: 2.0
+

@@ -121,6 +121,18 @@ def test_primeknetv3():
     )
     y = model(x)
 
+def test_primeknetv5():
+    from models.primeKnetv5 import PrimeKnetv5
+    model = PrimeKnetv5(
+        fft_len=400,
+        dense_channel=64,
+        sigmoid_beta=2,
+    )
+    x = dict(
+        magnitude=torch.randn(1, 201, 356),
+        phase=torch.randn(1, 201, 356)
+    )
+    y = model(x)
 
 if __name__ == "__main__":
     # test_ghostsenet()
@@ -130,4 +142,5 @@ if __name__ == "__main__":
     # test_ghostsenet()
     # test_primeknet()
     # test_TFconv()
-    test_primeknetv3()
+    # test_primeknetv3()
+    test_primeknetv5()

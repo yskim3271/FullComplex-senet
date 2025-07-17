@@ -1,5 +1,5 @@
-model_lib: primeKnetv3
-model_class: PrimeKnetv3
+model_lib: primeKnetv4
+model_class: PrimeKnetv4
 
 param:
   fft_len: 400
