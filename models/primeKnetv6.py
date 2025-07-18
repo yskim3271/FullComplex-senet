@@ -232,7 +232,6 @@ class PrimeAttentionEncoder(nn.Module):
         
         self.dfc_attention = DFC_AttentionModule(in_channel, out_channel, kernel_size=kernel_size)
         self.se = SqueezeExcite(out_channel, se_ratio=0.25)
-        self.conv_beta = nn.Conv2d(in_channel, out_channel, kernel_size=1, stride=1, padding=0, bias=False)
         self.primeFFN_time = PrimeFFN(out_channel, mode="time", kernel_size_list=[3, 11, 23, 31])
         self.primeFFN_freq = PrimeFFN(out_channel, mode="freq", kernel_size_list=[3, 5, 7])
         self.conv_dw = nn.Conv2d(out_channel, out_channel, kernel_size=dw_size, stride=(1, 2), padding=1, groups=out_channel, bias=False)
@@ -241,7 +240,7 @@ class PrimeAttentionEncoder(nn.Module):
     def forward(self, x):
         shortcut = x.clone()
         x = self.dfc_attention(x)
-        x = self.se(x) + self.conv_beta(shortcut)
+        x = self.se(x)
         x = self.primeFFN_time(x)
         x = self.primeFFN_freq(x)
         x = self.conv_dw(x)
