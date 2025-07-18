@@ -107,30 +107,16 @@ def test_TFconv():
     print(f"y: {y}")
     print(f"weight: {conv.weight}")
 
-def test_primeknetv3():
-    from models.primeKnetv3 import PrimeKnetv3
-    model = PrimeKnetv3(
+def test_primeknetv6():
+    from models.primeKnetv6 import PrimeKnetv6
+    model = PrimeKnetv6(
         fft_len=400,
         dense_channel=64,
         sigmoid_beta=2,
-        num_tsblock=4   
     )
     x = dict(
         magnitude=torch.randn(1, 201, 400),
         phase=torch.randn(1, 201, 400)
-    )
-    y = model(x)
-
-def test_primeknetv5():
-    from models.primeKnetv5 import PrimeKnetv5
-    model = PrimeKnetv5(
-        fft_len=400,
-        dense_channel=64,
-        sigmoid_beta=2,
-    )
-    x = dict(
-        magnitude=torch.randn(1, 201, 356),
-        phase=torch.randn(1, 201, 356)
     )
     y = model(x)
 
@@ -143,4 +129,4 @@ if __name__ == "__main__":
     # test_primeknet()
     # test_TFconv()
     # test_primeknetv3()
-    test_primeknetv5()
+    test_primeknetv6()

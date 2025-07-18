@@ -135,13 +135,14 @@ class PhaseDecoder(nn.Module):
         return x
 
 class PrimeFFN(nn.Module):
-    def __init__(self, in_channel, kernel_size_list=[3, 11, 23, 31]):
+    def __init__(self, in_channel, kernel_size_list=[3, 11, 23, 31], mode="time"):
         super(PrimeFFN, self).__init__()
 
         self.in_channel = in_channel
         self.expand_ratio = len(kernel_size_list)
         self.mid_channel =  in_channel * self.expand_ratio
         self.kernel_size_list = kernel_size_list
+        self.mode = mode
 
         self.norm = nn.InstanceNorm2d(in_channel)
         for ksize in kernel_size_list:
@@ -153,10 +154,14 @@ class PrimeFFN(nn.Module):
 
         self.expand = nn.Conv1d(in_channel, self.mid_channel, kernel_size=1)
         self.reduce = nn.Conv1d(self.mid_channel, in_channel, kernel_size=1)
+        self.scale = nn.Parameter(torch.ones(1, in_channel, 1), requires_grad=True)
 
     def forward(self, x):
         b, c, t, f = x.size()
-        x = x.permute(0, 3, 1, 2).contiguous().view(b*f, c, t)
+        if self.mode == "time":
+            x = x.permute(0, 3, 1, 2).contiguous().view(b*f, c, t)
+        elif self.mode == "freq":
+            x = x.permute(0, 2, 1, 3).contiguous().view(b*t, c, f)
 
         shortcut = x.clone()
         x = self.norm(x)
@@ -166,10 +171,13 @@ class PrimeFFN(nn.Module):
             x_list[i] = getattr(self, f"attn_{ksize}")(x_list[i]) * getattr(self, f"conv_{ksize}")(x_list[i])
         x = torch.cat(x_list, dim=1)
         x = self.reduce(x)
-        x = x + shortcut
-
-        x = x.view(b, f, c, t).permute(0, 2, 3, 1).contiguous()
+        x = x * self.scale + shortcut
+        if self.mode == "time":
+            x = x.view(b, f, c, t).permute(0, 2, 3, 1).contiguous()
+        elif self.mode == "freq":
+            x = x.view(b, t, c, f).permute(0, 2, 1, 3).contiguous()
         return x
+
 
 class SPConvTranspose2d(nn.Module):
     def __init__(self, 
@@ -193,7 +201,6 @@ class SPConvTranspose2d(nn.Module):
         out = out.contiguous().view((batch_size, nchannels // self.r, H, -1))
         return out
 
-
 class DFC_AttentionModule(nn.Module):
     def __init__(self, in_channel, out_channel, kernel_size=3):
         super(DFC_AttentionModule, self).__init__()
@@ -205,7 +212,6 @@ class DFC_AttentionModule(nn.Module):
             nn.InstanceNorm2d(out_channel, affine=True),
             nn.PReLU(out_channel)
         )
-
         self.attn_conv = nn.Sequential(
             nn.Conv2d(in_channel, out_channel, kernel_size=1, stride=1, padding=0, bias=False),
             nn.Conv2d(out_channel, out_channel, kernel_size=(1, 5), stride=1, padding=(0, 2), bias=False),
@@ -220,30 +226,34 @@ class DFC_AttentionModule(nn.Module):
 
         return x[:,:self.out_channel,:,:]*F.interpolate(self.gate_fn(res), size=(x.shape[-2], x.shape[-1]), mode='nearest')
 
-class GhostTFEncoder(nn.Module):
+class PrimeAttentionEncoder(nn.Module):
     def __init__(self, in_channel, out_channel, kernel_size=3, dw_size=3):
-        super(GhostTFEncoder, self).__init__()
+        super(PrimeAttentionEncoder, self).__init__()
         
-        self.ghost = DFC_AttentionModule(in_channel, out_channel, kernel_size=kernel_size)
-        self.se = SqueezeExcite(out_channel, se_ratio=0.5)
-        self.primeFFN = PrimeFFN(out_channel)
+        self.dfc_attention = DFC_AttentionModule(in_channel, out_channel, kernel_size=kernel_size)
+        self.se = SqueezeExcite(out_channel, se_ratio=0.25)
+        self.conv_beta = nn.Conv2d(in_channel, out_channel, kernel_size=1, stride=1, padding=0, bias=False)
+        self.primeFFN_time = PrimeFFN(out_channel, mode="time", kernel_size_list=[3, 11, 23, 31])
+        self.primeFFN_freq = PrimeFFN(out_channel, mode="freq", kernel_size_list=[3, 5, 7])
         self.conv_dw = nn.Conv2d(out_channel, out_channel, kernel_size=dw_size, stride=(1, 2), padding=1, groups=out_channel, bias=False)
         self.norm_dw = nn.InstanceNorm2d(out_channel, affine=True)
 
     def forward(self, x):
-        x = self.ghost(x)
-        x = self.se(x)
-        x = self.primeFFN(x)
+        shortcut = x.clone()
+        x = self.dfc_attention(x)
+        x = self.se(x) + self.conv_beta(shortcut)
+        x = self.primeFFN_time(x)
+        x = self.primeFFN_freq(x)
         x = self.conv_dw(x)
         x = self.norm_dw(x)
         return x
 
-class GhostTFBlock(nn.Module):
+class PrimeAttentionBlock(nn.Module):
     def __init__(self, kernel_size=3, dw_size=3):
-        super(GhostTFBlock, self).__init__()
+        super(PrimeAttentionBlock, self).__init__()
         
-        self.encoder1 = GhostTFEncoder(64, 96, kernel_size=kernel_size, dw_size=dw_size)
-        self.encoder2 = GhostTFEncoder(96, 128, kernel_size=kernel_size, dw_size=dw_size)
+        self.encoder1 = PrimeAttentionEncoder(64, 96, kernel_size=kernel_size, dw_size=dw_size)
+        self.encoder2 = PrimeAttentionEncoder(96, 128, kernel_size=kernel_size, dw_size=dw_size)
         self.decoder1 = nn.Sequential(
             SPConvTranspose2d(128, 96, kernel_size=(1, 3), r=2),
             nn.InstanceNorm2d(96, affine=True),
@@ -254,13 +264,14 @@ class GhostTFBlock(nn.Module):
             nn.InstanceNorm2d(64, affine=True),
             nn.PReLU(64)
         )
+        self.beta = nn.Parameter(torch.ones(1, 96, 1, 1), requires_grad=True)
 
     def forward(self, x):
         x = self.encoder1(x)
         skip = x 
         x = self.encoder2(x)
         x = self.decoder1(x)
-        x = x + skip
+        x = x + skip * self.beta
         x = self.decoder2(x)         
         return x
 
@@ -275,7 +286,7 @@ class PrimeKnetv6(nn.Module):
         self.fft_len = fft_len
         self.dense_channel = dense_channel
         self.dense_encoder = DenseEncoder(dense_channel, in_channel=2)
-        self.ghost_tfblock = GhostTFBlock(kernel_size=3, dw_size=3)
+        self.prime_attention_block = PrimeAttentionBlock(kernel_size=3, dw_size=3)
         self.mask_decoder = MaskDecoder(dense_channel, fft_len, sigmoid_beta, out_channel=1)
         self.phase_decoder = PhaseDecoder(dense_channel, out_channel=1)
 
@@ -291,7 +302,7 @@ class PrimeKnetv6(nn.Module):
 
         x = self.dense_encoder(x)
 
-        x = self.ghost_tfblock(x)
+        x = self.prime_attention_block(x)
         
         denoised_mag = (mag * self.mask_decoder(x)).permute(0, 3, 2, 1).squeeze(-1)
         denoised_pha = self.phase_decoder(x).permute(0, 3, 2, 1).squeeze(-1)

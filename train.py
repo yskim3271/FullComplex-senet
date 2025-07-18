@@ -14,7 +14,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 from datasets import load_dataset
 from models.discriminator import MetricGAN_Discriminator
-
+import shutil
 from data import VoiceBankDataset, StepSampler
 from solver import Solver
 
@@ -94,6 +94,19 @@ def run(rank, world_size, args):
         total_params = sum(p.numel() for p in model.parameters())
         model_size_mb = (total_params) / (1024 * 1024)
         logger.info(f"Model's size: {model_size_mb:.2f} MB")
+
+        if args.save_code:
+            # Use hydra.utils.to_absolute_path to get the correct path
+            original_file = hydra.utils.to_absolute_path(__file__)
+            project_root = os.path.dirname(original_file)
+            src = os.path.join(project_root, "models", f"{model_lib}.py")
+            dest = f"./{model_lib}.py"
+            
+            if os.path.exists(src):
+                shutil.copy2(src, dest)
+                logger.info(f"Copied {src} to {dest}")
+            else:
+                logger.warning(f"Model file not found: {src}")
 
     discriminator = None
     optim_disc = None
