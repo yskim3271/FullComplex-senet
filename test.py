@@ -1,6 +1,45 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
+
+class LayerNormFunction(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, x, weight, bias, eps):
+        ctx.eps = eps
+        B, C, T = x.size()
+        mu = x.mean(1, keepdim=True)
+        var = (x - mu).pow(2).mean(1, keepdim=True)
+        y = (x - mu) / (var + eps).sqrt()
+        ctx.save_for_backward(y, var, weight)
+        y = weight.view(1, C, 1) * y + bias.view(1, C, 1)
+        return y
+    @staticmethod
+    def backward(ctx, grad_output):
+        eps = ctx.eps
+
+        B, C, T = grad_output.size()
+        y, var, weight = ctx.saved_variables
+        g = grad_output * weight.view(1, C, 1)
+        mean_g = g.mean(dim=1, keepdim=True)
+
+        mean_gy = (g * y).mean(dim=1, keepdim=True)
+        gx = 1. / torch.sqrt(var + eps) * (g - y * mean_gy - mean_g)
+        return gx, (grad_output * y).sum(dim=2).sum(dim=0), grad_output.sum(dim=2).sum(
+            dim=0), None
+
+
+class LayerNorm1d(nn.Module):
+
+    def __init__(self, channels, eps=1e-6):
+        super(LayerNorm1d, self).__init__()
+        self.register_parameter('weight', nn.Parameter(torch.ones(channels)))
+        self.register_parameter('bias', nn.Parameter(torch.zeros(channels)))
+        self.eps = eps
+
+    def forward(self, x):
+        return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
 
 
 def test_dataset():
@@ -120,6 +159,108 @@ def test_primeknetv6():
     )
     y = model(x)
 
+def test_primeknetv7():
+    from models.primeKnetv7 import PrimeKnetv7
+    model = PrimeKnetv7(
+        fft_len=400,
+        dense_channel=64,
+        sigmoid_beta=2,
+        num_tsblock=4
+    )
+    x = dict(
+        magnitude=torch.randn(1, 201, 400),
+        phase=torch.randn(1, 201, 400),
+        complex=torch.randn(1, 201, 400, 2)
+    )
+    y = model(x)
+
+def test_layernorm_vs_instancenorm():
+    """
+    Compare LayerNorm1d with InstanceNorm to analyze their differences
+    """
+    print("=== LayerNorm1d vs InstanceNorm Comparison ===")
+    
+    # Test parameters
+    batch_size = 2
+    channels = 64
+    time_steps = 100
+    
+    # Create test input
+    x = torch.randn(batch_size, channels, time_steps)
+    print(f"Input shape: {x.shape}")
+    print(f"Input mean: {x.mean():.4f}, std: {x.std():.4f}")
+    
+    # Initialize LayerNorm1d
+    layer_norm = LayerNorm1d(channels)
+    
+    # Initialize InstanceNorm1d
+    instance_norm = nn.InstanceNorm1d(channels, affine=True)
+    
+    # Forward pass
+    with torch.no_grad():
+        out_layer = layer_norm(x)
+        out_instance = instance_norm(x)
+    
+    print("\n--- Output Statistics ---")
+    print(f"LayerNorm1d output - mean: {out_layer.mean():.4f}, std: {out_layer.std():.4f}")
+    print(f"InstanceNorm1d output - mean: {out_instance.mean():.4f}, std: {out_instance.std():.4f}")
+    
+    # Compare per-sample statistics
+    print("\n--- Per-Sample Statistics ---")
+    for i in range(batch_size):
+        layer_sample = out_layer[i]
+        instance_sample = out_instance[i]
+        
+        print(f"Sample {i}:")
+        print(f"  LayerNorm1d - mean: {layer_sample.mean():.4f}, std: {layer_sample.std():.4f}")
+        print(f"  InstanceNorm1d - mean: {instance_sample.mean():.4f}, std: {instance_sample.std():.4f}")
+    
+    # Compare per-channel statistics
+    print("\n--- Per-Channel Statistics (first 5 channels) ---")
+    for c in range(min(5, channels)):
+        layer_channel = out_layer[:, c, :]
+        instance_channel = out_instance[:, c, :]
+        
+        print(f"Channel {c}:")
+        print(f"  LayerNorm1d - mean: {layer_channel.mean():.4f}, std: {layer_channel.std():.4f}")
+        print(f"  InstanceNorm1d - mean: {instance_channel.mean():.4f}, std: {instance_channel.std():.4f}")
+    
+    # Compute difference between outputs
+    diff = torch.abs(out_layer - out_instance)
+    print(f"\n--- Difference Analysis ---")
+    print(f"Mean absolute difference: {diff.mean():.4f}")
+    print(f"Max absolute difference: {diff.max():.4f}")
+    print(f"Min absolute difference: {diff.min():.4f}")
+    
+    # Test with gradient computation
+    print("\n--- Gradient Test ---")
+    x_grad = torch.randn(batch_size, channels, time_steps, requires_grad=True)
+    
+    # LayerNorm1d gradient
+    layer_norm_grad = LayerNorm1d(channels)
+    out_layer_grad = layer_norm_grad(x_grad)
+    loss_layer = out_layer_grad.sum()
+    loss_layer.backward()
+    layer_grad = x_grad.grad.clone()
+    
+    # Reset gradient
+    x_grad.grad.zero_()
+    
+    # InstanceNorm1d gradient
+    instance_norm_grad = nn.InstanceNorm1d(channels, affine=True)
+    out_instance_grad = instance_norm_grad(x_grad)
+    loss_instance = out_instance_grad.sum()
+    loss_instance.backward()
+    instance_grad = x_grad.grad.clone()
+    
+    print(f"LayerNorm1d gradient - mean: {layer_grad.mean():.4f}, std: {layer_grad.std():.4f}")
+    print(f"InstanceNorm1d gradient - mean: {instance_grad.mean():.4f}, std: {instance_grad.std():.4f}")
+    
+    grad_diff = torch.abs(layer_grad - instance_grad)
+    print(f"Gradient difference - mean: {grad_diff.mean():.4f}, max: {grad_diff.max():.4f}")
+    
+    print("\n=== Test Complete ===\n")
+
 if __name__ == "__main__":
     # test_ghostsenet()
     # test_ghostsenetv2()
@@ -129,4 +270,5 @@ if __name__ == "__main__":
     # test_primeknet()
     # test_TFconv()
     # test_primeknetv3()
-    test_primeknetv6()
+    test_primeknetv7()
+    # test_layernorm_vs_instancenorm()

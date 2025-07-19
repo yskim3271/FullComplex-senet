@@ -180,28 +180,27 @@ class DS_DDB(nn.Module):
             dil = 2 ** i
 
             dense_conv5 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(5, 5), dilation=(dil, 1),
-                          padding=get_padding_2d((5, 5), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-                nn.Conv2d(in_channels=dense_channel*(i+1), out_channels=dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
-                nn.BatchNorm2d(dense_channel),
+                nn.Conv2d(dense_channel*(i+1), dense_channel, kernel_size=(5, 5), dilation=(dil, 1),
+                          padding=get_padding_2d((5, 5), dilation=(dil, 1)), bias=True),
+                nn.InstanceNorm2d(dense_channel, affine=True),
+                nn.PReLU(dense_channel)
             )
             dense_conv3 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(3, 3), dilation=(dil, 1),
-                          padding=get_padding_2d((3, 3), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-                nn.Conv2d(in_channels=dense_channel*(i+1), out_channels=dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
-                nn.BatchNorm2d(dense_channel),
+                nn.Conv2d(dense_channel*(i+1), dense_channel, kernel_size=(3, 3), dilation=(dil, 1),
+                          padding=get_padding_2d((3, 3), dilation=(dil, 1)), bias=True),
+                nn.InstanceNorm2d(dense_channel, affine=True),
+                nn.PReLU(dense_channel)
             )
             dense_conv1 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(1, 1), dilation=(dil, 1),
-                          padding=get_padding_2d((1, 1), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-                nn.Conv2d(in_channels=dense_channel*(i+1), out_channels=dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
-                nn.BatchNorm2d(dense_channel),
+                nn.Conv2d(dense_channel*(i+1), dense_channel, kernel_size=(1, 1), dilation=(dil, 1),
+                          padding=get_padding_2d((1, 1), dilation=(dil, 1)), bias=True),
+                nn.InstanceNorm2d(dense_channel, affine=True),
+                nn.PReLU(dense_channel)
             )
 
             self.dense_block1.append(dense_conv5)
             self.dense_block2.append(dense_conv3)
             self.dense_block3.append(dense_conv1)
-            self.nonlinearity = nn.PReLU(dense_channel)
 
     def forward(self, x):
         skip = x
@@ -209,7 +208,7 @@ class DS_DDB(nn.Module):
             x1 = self.dense_block1[i](skip)
             x2= self.dense_block2[i](skip)
             x3 = self.dense_block3[i](skip)
-            skip = torch.cat([self.nonlinearity(x1+x2+x3), skip], dim=1)
+            skip = torch.cat([x1+x2+x3, skip], dim=1)
         return x
 
 
@@ -284,14 +283,14 @@ class PhaseDecoder(nn.Module):
         x = torch.atan2(x_i, x_r)
         return x
 
-class PrimeKnetv6(nn.Module):
+class PrimeKnetv7(nn.Module):
     def __init__(self, 
                  fft_len=400,
                  dense_channel=64,
                  sigmoid_beta=2.0,
                  num_tsblock=4
                  ):
-        super(PrimeKnetv6, self).__init__()
+        super(PrimeKnetv7, self).__init__()
         self.fft_len = fft_len
         self.dense_channel = dense_channel
         self.num_tsblock = num_tsblock
@@ -309,6 +308,7 @@ class PrimeKnetv6(nn.Module):
 
         mag = mag.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
         pha = pha.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
+
         x = torch.cat((mag, pha), dim=1) # [B, 2, T, F]
 
         x = self.dense_encoder(x)
