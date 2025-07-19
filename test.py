@@ -159,9 +159,9 @@ def test_primeknetv6():
     )
     y = model(x)
 
-def test_primeknetv5():
-    from models.primeKnetv5 import PrimeKnetv5
-    model = PrimeKnetv5(
+def test_primeknetv3():
+    from models.primeKnetv3 import PrimeKnetv3
+    model = PrimeKnetv3(
         fft_len=400,
         dense_channel=64,
         sigmoid_beta=2,
@@ -269,5 +269,6 @@ if __name__ == "__main__":
     # test_primeknet()
     # test_TFconv()
     # test_primeknetv3()
-    test_primeknetv5()
+    # test_primeknetv4()
+    test_primeknetv3()
     # test_layernorm_vs_instancenorm()

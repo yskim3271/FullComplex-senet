@@ -176,6 +176,8 @@ class DS_DDB(nn.Module):
         self.dense_block2 = nn.ModuleList([])
         self.dense_block3 = nn.ModuleList([])
         self.dense_block4 = nn.ModuleList([])
+        self.dense_block5 = nn.ModuleList([])
+        self.dense_block6 = nn.ModuleList([])
         for i in range(depth):
             dil = 2 ** i
 
@@ -192,7 +194,7 @@ class DS_DDB(nn.Module):
                 nn.BatchNorm2d(dense_channel),
             )
             dense_conv1_3 = nn.Sequential(
-                nn.Conv2d(dense_channel, dense_channel, kernel_size=(1, 1), dilation=(dil, 1),
+                nn.Conv2d(dense_channel*(i+1), dense_channel, kernel_size=(1, 1), dilation=(dil, 1),
                           padding=get_padding_2d((1, 1), dilation=(dil, 1)), groups=dense_channel, bias=True),
                 nn.BatchNorm2d(dense_channel),
             )
@@ -209,7 +211,7 @@ class DS_DDB(nn.Module):
                 nn.BatchNorm2d(dense_channel),
             )
             dense_conv3_3 = nn.Sequential(
-                nn.Conv2d(dense_channel, dense_channel, kernel_size=(3, 3), dilation=(dil, 1),
+                nn.Conv2d(dense_channel*(i+1), dense_channel, kernel_size=(3, 3), dilation=(dil, 1),
                           padding=get_padding_2d((3, 3), dilation=(dil, 1)), groups=dense_channel, bias=True),
                 nn.BatchNorm2d(dense_channel),
             )
@@ -226,7 +228,7 @@ class DS_DDB(nn.Module):
         skip = x
         for i in range(self.depth):
             x1 = self.dense_block1[i](skip)
-            x2= self.dense_block2[i](skip)
+            x2 = self.dense_block2[i](skip)
             x3 = self.dense_block3[i](skip)
             x4 = self.dense_block4[i](skip)
             x5 = self.dense_block5[i](skip)
