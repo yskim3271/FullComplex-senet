@@ -173,8 +173,8 @@ class DS_DDB(nn.Module):
         self.dense_channel = dense_channel
         self.depth = depth
         self.repconv1_list = nn.ModuleList([])
-        self.repconv3_list = nn.ModuleList([])
-        self.repconv5_list = nn.ModuleList([])
+        self.repconv3_1_list = nn.ModuleList([])
+        self.repconv1_3_list = nn.ModuleList([])
         self.dense_block = nn.ModuleList([])
         for i in range(depth):
             dil = 2 ** i
@@ -202,16 +202,16 @@ class DS_DDB(nn.Module):
                 nn.PReLU(dense_channel)
             )
             self.repconv1_list.append(rep_conv1)
-            self.repconv3_list.append(rep_conv3_1)
-            self.repconv3_list.append(rep_conv3_2)
+            self.repconv3_1_list.append(rep_conv3_1)
+            self.repconv1_3_list.append(rep_conv3_2)
             self.dense_block.append(dense_conv)
 
     def forward(self, x):
         skip = x
         for i in range(self.depth):
             x1 = self.repconv1_list[i](skip)
-            x2 = self.repconv3_list[i](skip)
-            x3 = self.repconv5_list[i](skip)
+            x2 = self.repconv3_1_list[i](skip)
+            x3 = self.repconv1_3_list[i](skip)
             x = self.dense_block[i](x1+x2+x3)
             skip = torch.cat([x, skip], dim=1)
         return x
