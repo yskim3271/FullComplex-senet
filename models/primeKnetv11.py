@@ -15,7 +15,6 @@ class SimpleGate(nn.Module):
         return x1 * x2
 
 class LayerNormFunction(torch.autograd.Function):
-
     @staticmethod
     def forward(ctx, x, weight, bias, eps):
         ctx.eps = eps
