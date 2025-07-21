@@ -310,15 +310,13 @@ class SPConvTranspose2d(nn.Module):
                  in_channels, 
                  out_channels, 
                  kernel_size, 
-                 r=1,
-                 fft_len=400
+                 r=1
                  ):
         super(SPConvTranspose2d, self).__init__()
         self.pad1 = nn.ConstantPad2d((1, 2, 0, 0), value=0.)
         self.out_channels = out_channels
         self.conv = nn.Conv2d(in_channels, out_channels * r, kernel_size=kernel_size, stride=(1, 1))
         self.r = r
-        self.fft_len = fft_len
 
     def forward(self, x):
         # [B, C, T, F//2]
@@ -328,7 +326,6 @@ class SPConvTranspose2d(nn.Module):
         out = out.view((B, self.r, C // self.r, T, F))
         out = out.permute(0, 2, 3, 4, 1) # [B, C//r, T, F, r]
         out = out.contiguous().view((B, C // self.r, T, -1)) # [B, C//r, T, F*r]
-        out = out[:, :, :, :self.fft_len//2+1]
         return out
 
 class MaskDecoder(nn.Module):
@@ -338,14 +335,14 @@ class MaskDecoder(nn.Module):
                  sigmoid_beta,
                  out_channel=1):
         super(MaskDecoder, self).__init__()
-        self.n_fft = n_fft
         self.dense_block = DS_DDB(dense_channel, depth=4)
         self.mask_conv = nn.Sequential(
             nn.Conv2d(dense_channel, dense_channel*2, kernel_size=1),
             nn.GLU(dim=1),
             SPConvTranspose2d(dense_channel, dense_channel, (1, 3), r=2),
-            nn.Conv2d(dense_channel, out_channel, (1, 1)),
-            nn.InstanceNorm2d(out_channel)
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel),
+            nn.Conv2d(dense_channel, out_channel, (1, 2)),
         )
         self.lsigmoid = LearnableSigmoid_2d(n_fft//2+1, beta=sigmoid_beta)
 
@@ -367,11 +364,11 @@ class PhaseDecoder(nn.Module):
             nn.Conv2d(dense_channel, dense_channel*2, kernel_size=1),
             nn.GLU(dim=1),
             SPConvTranspose2d(dense_channel, dense_channel, (1, 3), r=2),
-            nn.InstanceNorm2d(dense_channel),
-            nn.SiLU(),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel),
         )
-        self.phase_conv_r = nn.Conv2d(dense_channel, out_channel, (1, 1))
-        self.phase_conv_i = nn.Conv2d(dense_channel, out_channel, (1, 1))
+        self.phase_conv_r = nn.Conv2d(dense_channel, out_channel, (1, 2))
+        self.phase_conv_i = nn.Conv2d(dense_channel, out_channel, (1, 2))
 
     def forward(self, x):
         x = self.dense_block(x)
@@ -381,7 +378,7 @@ class PhaseDecoder(nn.Module):
         x = torch.atan2(x_i, x_r)
         return x
     
-    
+
 class TS_BLOCK(nn.Module):
     def __init__(self, dense_channel):
         super(TS_BLOCK, self).__init__()

@@ -260,6 +260,33 @@ def test_layernorm_vs_instancenorm():
     
     print("\n=== Test Complete ===\n")
 
+def test_primeknetv2():
+    from models.primeKnetv2 import PrimeKnetv2
+    model = PrimeKnetv2(
+        fft_len=400,
+        dense_channel=64,
+        sigmoid_beta=2,
+        num_tsblock=4
+    )
+    x = dict(
+        magnitude=torch.randn(1, 201, 400),
+        phase=torch.randn(1, 201, 400)
+    )
+    y = model(x)
+
+def test_primeknetv3():
+    from models.primeKnetv3 import PrimeKnetv3
+    model = PrimeKnetv3(
+        fft_len=400,
+        dense_channel=64,
+        sigmoid_beta=2,
+        num_tsblock=4
+    )
+    x = dict(
+        magnitude=torch.randn(1, 201, 400),
+        phase=torch.randn(1, 201, 400)
+    )
+    y = model(x)
 if __name__ == "__main__":
     # test_ghostsenet()
     # test_ghostsenetv2()
@@ -269,6 +296,6 @@ if __name__ == "__main__":
     # test_primeknet()
     # test_TFconv()
     # test_primeknetv3()
-    # test_primeknetv4()
     test_primeknetv4()
+    # test_primeknetv2()
     # test_layernorm_vs_instancenorm()
