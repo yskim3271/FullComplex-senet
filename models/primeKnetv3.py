@@ -180,21 +180,17 @@ class DS_DDB(nn.Module):
             dil = 2 ** i
 
             rep_conv1 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(1, 1), padding=0, stride=1, groups=dense_channel*(i+1),
-                          bias=True),
-                nn.BatchNorm2d(dense_channel*(i+1)),
+                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(1, 1), stride=1, dilation=(dil, 1),
+                          padding=get_padding_2d((1, 1), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
             )
             rep_conv3 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(3, 3), padding=1, stride=1, groups=dense_channel*(i+1),
-                          bias=True),
-                nn.BatchNorm2d(dense_channel*(i+1)),
+                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(3, 3), stride=1, dilation=(dil, 1),
+                          padding=get_padding_2d((3, 3), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
             )
             rep_conv5 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(5, 5), padding=2, stride=1, groups=dense_channel*(i+1),
-                          bias=True),
-                nn.BatchNorm2d(dense_channel*(i+1)),
+                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(5, 5), stride=1, dilation=(dil, 1),
+                          padding=get_padding_2d((5, 5), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
             )
-
             dense_conv = nn.Sequential(
                 nn.Conv2d(in_channels=dense_channel*(i+1), out_channels=dense_channel, kernel_size=1, padding=0, stride=1, groups=1,
                           bias=True),
