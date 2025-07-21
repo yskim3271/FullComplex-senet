@@ -5,4 +5,4 @@ param:
   fft_len: 400
   dense_channel: 64
   sigmoid_beta: 2.0
-
+  num_tsblock: 4
