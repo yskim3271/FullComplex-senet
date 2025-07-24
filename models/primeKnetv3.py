@@ -171,48 +171,55 @@ class DS_DDB(nn.Module):
     def __init__(self, dense_channel, depth=4):
         super(DS_DDB, self).__init__()
         self.dense_channel = dense_channel
-        self.depth = depth
-        self.repconv1_list = nn.ModuleList([])
-        self.repconv3_list = nn.ModuleList([])
-        self.repconv5_list = nn.ModuleList([])
-        self.dense_block = nn.ModuleList([])
-        for i in range(depth):
-            dil = 2 ** i
 
-            rep_conv1 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(1, 1), stride=1, dilation=(dil, 1),
-                          padding=get_padding_2d((1, 1), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-            )
-            rep_conv3 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(3, 3), stride=1, dilation=(dil, 1),
-                          padding=get_padding_2d((3, 3), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-            )
-            rep_conv5 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(5, 5), stride=1, dilation=(dil, 1),
-                          padding=get_padding_2d((5, 5), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-            )
-            dense_conv = nn.Sequential(
-                nn.Conv2d(in_channels=dense_channel*(i+1), out_channels=dense_channel, kernel_size=1, padding=0, stride=1, groups=1,
-                          bias=True),
-                nn.InstanceNorm2d(dense_channel, affine=True),
-                nn.PReLU(dense_channel)
-            )
-            self.repconv1_list.append(rep_conv1)
-            self.repconv3_list.append(rep_conv3)
-            self.repconv5_list.append(rep_conv5)
-            self.dense_block.append(dense_conv)
+        self.expand_conv = nn.Conv2d(dense_channel, dense_channel*5, kernel_size=1, padding=0, stride=1, groups=1, bias=False)
 
+        self.dilated_conv1 = nn.Sequential(
+            nn.Conv2d(dense_channel, dense_channel, kernel_size=3, dilation=(1,1),
+                      padding=get_padding_2d((3, 3), dilation=(1, 1)), groups=dense_channel, bias=True),
+            nn.Conv2d(dense_channel, dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel)
+        )
+        self.dilated_conv2 = nn.Sequential(
+            nn.Conv2d(dense_channel, dense_channel, kernel_size=3, dilation=(2,1),
+                      padding=get_padding_2d((3, 3), dilation=(2, 1)), groups=dense_channel, bias=True),
+            nn.Conv2d(dense_channel, dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel)
+        )
+        self.dilated_conv3 = nn.Sequential(
+            nn.Conv2d(dense_channel, dense_channel, kernel_size=3, dilation=(4,1),
+                      padding=get_padding_2d((3, 3), dilation=(4, 1)), groups=dense_channel, bias=True),
+            nn.Conv2d(dense_channel, dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel)
+        )
+        self.dilated_conv4 = nn.Sequential(
+            nn.Conv2d(dense_channel, dense_channel, kernel_size=3, dilation=(8,1),
+                      padding=get_padding_2d((3, 3), dilation=(8, 1)), groups=dense_channel, bias=True),
+            nn.Conv2d(dense_channel, dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel)
+        )
+    
     def forward(self, x):
-        skip = x
-        for i in range(self.depth):
-            x1 = self.repconv1_list[i](skip)
-            x2 = self.repconv3_list[i](skip)
-            x3 = self.repconv5_list[i](skip)
-            x = self.dense_block[i](x1+x2+x3)
-            skip = torch.cat([x, skip], dim=1)
-        return x
-
-
+        x1, x2, x3, x4, x5 = torch.chunk(self.expand_conv(x), 5, dim=1)
+        x1 = self.dilated_conv1(x1)
+        x2 = x1 + x2
+        x3 = x1 + x3
+        x4 = x1 + x4
+        x5 = x1 + x5
+        x2 = self.dilated_conv2(x2)
+        x3 = x2 + x3
+        x4 = x2 + x4
+        x5 = x2 + x5
+        x3 = self.dilated_conv3(x3)
+        x4 = x3 + x4
+        x5 = x3 + x5
+        x4 = self.dilated_conv4(x4)
+        x5 = x4 + x5
+        return x5
 
 class DenseEncoder(nn.Module):
     def __init__(self, dense_channel, in_channel):
