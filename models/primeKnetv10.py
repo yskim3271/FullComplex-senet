@@ -1,5 +1,9 @@
 import torch
+import torch.nn.functional as F
 import torch.nn as nn
+from einops.layers.torch import Rearrange
+import math
+from torchvision.ops.deform_conv import DeformConv2d
 
 from data import mag_pha_to_complex
 
@@ -15,7 +19,6 @@ class SimpleGate(nn.Module):
         return x1 * x2
 
 class LayerNormFunction(torch.autograd.Function):
-
     @staticmethod
     def forward(ctx, x, weight, bias, eps):
         ctx.eps = eps
@@ -42,7 +45,6 @@ class LayerNormFunction(torch.autograd.Function):
 
 
 class LayerNorm1d(nn.Module):
-
     def __init__(self, channels, eps=1e-6):
         super(LayerNorm1d, self).__init__()
         self.register_parameter('weight', nn.Parameter(torch.ones(channels)))
@@ -106,7 +108,7 @@ class LKFCA_Block(nn.Module):
             nn.Conv1d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=1, padding=0, stride=1,
                       groups=1, bias=True),
         )
-        # SimpleGate
+
         self.sg = SimpleGate()
         self.norm1 = LayerNorm1d(in_channels)
         self.beta = nn.Parameter(torch.zeros((1, in_channels, 1)), requires_grad=True)
@@ -164,49 +166,52 @@ class LearnableSigmoid_2d(nn.Module):
     def forward(self, x):
         return self.beta * torch.sigmoid(self.slope * x)
 
+
 class DS_DDB(nn.Module):
     def __init__(self, dense_channel, depth=4):
         super(DS_DDB, self).__init__()
         self.dense_channel = dense_channel
         self.depth = depth
-        self.dense_block1 = nn.ModuleList([])
-        self.dense_block2 = nn.ModuleList([])
-        self.dense_block3 = nn.ModuleList([])
-        for i in range(depth):
-            dil = 2 ** i
 
-            dense_conv5 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(5, 5), dilation=(dil, 1),
-                          padding=get_padding_2d((5, 5), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-                nn.Conv2d(in_channels=dense_channel*(i+1), out_channels=dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
-                nn.BatchNorm2d(dense_channel),
-            )
-            dense_conv3 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(3, 3), dilation=(dil, 1),
-                          padding=get_padding_2d((3, 3), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-                nn.Conv2d(in_channels=dense_channel*(i+1), out_channels=dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
-                nn.BatchNorm2d(dense_channel),
-            )
-            dense_conv1 = nn.Sequential(
-                nn.Conv2d(dense_channel*(i+1), dense_channel*(i+1), kernel_size=(1, 1), dilation=(dil, 1),
-                          padding=get_padding_2d((1, 1), dilation=(dil, 1)), groups=dense_channel*(i+1), bias=True),
-                nn.Conv2d(in_channels=dense_channel*(i+1), out_channels=dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
-                nn.BatchNorm2d(dense_channel),
-            )
+        self.expand_conv = nn.Conv2d(dense_channel, dense_channel * (self.depth + 1), kernel_size=1, padding=0, stride=1, groups=1, bias=False)
 
-            self.dense_block1.append(dense_conv5)
-            self.dense_block2.append(dense_conv3)
-            self.dense_block3.append(dense_conv1)
-            self.nonlinearity = nn.PReLU(dense_channel)
+        self.dilated_convs1 = nn.ModuleList()
+        self.dilated_convs3 = nn.ModuleList()
+        self.dilated_convs5 = nn.ModuleList()
+        self.pw_convs = nn.ModuleList()
+        for i in range(self.depth):
+            dilation_rate = 2**i
+            self.dilated_convs1.append(
+                    nn.Conv2d(dense_channel, dense_channel, kernel_size=1, dilation=(dilation_rate, dilation_rate),
+                              padding=get_padding_2d((1, 1), dilation=(dilation_rate, dilation_rate)), groups=dense_channel, bias=True)
+            )
+            self.dilated_convs3.append(
+                nn.Conv2d(dense_channel, dense_channel, kernel_size=3, dilation=(dilation_rate, dilation_rate),
+                          padding=get_padding_2d((3, 3), dilation=(dilation_rate, dilation_rate)), groups=dense_channel, bias=True)
+            )
+            self.dilated_convs5.append(
+                nn.Conv2d(dense_channel, dense_channel, kernel_size=5, dilation=(dilation_rate, dilation_rate),
+                          padding=get_padding_2d((5, 5), dilation=(dilation_rate, dilation_rate)), groups=dense_channel, bias=True)
+            )
+            self.pw_convs.append(
+                nn.Sequential(
+                    nn.Conv2d(dense_channel, dense_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True),
+                    nn.InstanceNorm2d(dense_channel, affine=True),
+                    nn.PReLU(dense_channel)
+                )
+            )
 
     def forward(self, x):
-        skip = x
+        chunks = list(torch.chunk(self.expand_conv(x), self.depth + 1, dim=1))
+
         for i in range(self.depth):
-            x1 = self.dense_block1[i](skip)
-            x2= self.dense_block2[i](skip)
-            x3 = self.dense_block3[i](skip)
-            skip = torch.cat([self.nonlinearity(x1+x2+x3), skip], dim=1)
-        return x
+            processed_chunk = self.dilated_convs1[i](chunks[i]) + self.dilated_convs3[i](chunks[i]) + self.dilated_convs5[i](chunks[i])
+            processed_chunk = self.pw_convs[i](processed_chunk)
+            
+            for j in range(i + 1, self.depth + 1):
+                chunks[j] = chunks[j] + processed_chunk
+        
+        return chunks[self.depth]
 
 
 class DenseEncoder(nn.Module):
@@ -215,14 +220,14 @@ class DenseEncoder(nn.Module):
         self.dense_channel = dense_channel
         self.dense_conv_1 = nn.Sequential(
             nn.Conv2d(in_channel, dense_channel, (1, 1)),
-            nn.BatchNorm2d(dense_channel),
+            nn.InstanceNorm2d(dense_channel, affine=True),
             nn.PReLU(dense_channel))
 
         self.dense_block = DS_DDB(dense_channel, depth=4) # [b, h.dense_channel, ndim_time, h.n_fft//2+1]
 
         self.dense_conv_2 = nn.Sequential(
             nn.Conv2d(dense_channel, dense_channel, (1, 3), (1, 2)),
-            nn.BatchNorm2d(dense_channel),
+            nn.InstanceNorm2d(dense_channel, affine=True),
             nn.PReLU(dense_channel))
 
     def forward(self, x):
@@ -231,20 +236,19 @@ class DenseEncoder(nn.Module):
         x = self.dense_conv_2(x)  # [b, 64, T, F//2]
         return x
 
+
 class SPConvTranspose2d(nn.Module):
     def __init__(self, 
                  in_channels, 
                  out_channels, 
                  kernel_size, 
-                 r=1,
-                 fft_len=400
+                 r=1
                  ):
         super(SPConvTranspose2d, self).__init__()
         self.pad1 = nn.ConstantPad2d((1, 2, 0, 0), value=0.)
         self.out_channels = out_channels
         self.conv = nn.Conv2d(in_channels, out_channels * r, kernel_size=kernel_size, stride=(1, 1))
         self.r = r
-        self.fft_len = fft_len
 
     def forward(self, x):
         # [B, C, T, F//2]
@@ -254,7 +258,6 @@ class SPConvTranspose2d(nn.Module):
         out = out.view((B, self.r, C // self.r, T, F))
         out = out.permute(0, 2, 3, 4, 1) # [B, C//r, T, F, r]
         out = out.contiguous().view((B, C // self.r, T, -1)) # [B, C//r, T, F*r]
-        out = out[:, :, :, :self.fft_len//2+1]
         return out
 
 class MaskDecoder(nn.Module):
@@ -264,14 +267,14 @@ class MaskDecoder(nn.Module):
                  sigmoid_beta,
                  out_channel=1):
         super(MaskDecoder, self).__init__()
-        self.n_fft = n_fft
         self.dense_block = DS_DDB(dense_channel, depth=4)
         self.mask_conv = nn.Sequential(
             nn.Conv2d(dense_channel, dense_channel*2, kernel_size=1),
             nn.GLU(dim=1),
             SPConvTranspose2d(dense_channel, dense_channel, (1, 3), r=2),
-            nn.Conv2d(dense_channel, out_channel, (1, 1)),
-            nn.InstanceNorm2d(out_channel)
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel),
+            nn.Conv2d(dense_channel, out_channel, (1, 2)),
         )
         self.lsigmoid = LearnableSigmoid_2d(n_fft//2+1, beta=sigmoid_beta)
 
@@ -293,11 +296,11 @@ class PhaseDecoder(nn.Module):
             nn.Conv2d(dense_channel, dense_channel*2, kernel_size=1),
             nn.GLU(dim=1),
             SPConvTranspose2d(dense_channel, dense_channel, (1, 3), r=2),
-            nn.InstanceNorm2d(dense_channel),
-            nn.SiLU(),
+            nn.InstanceNorm2d(dense_channel, affine=True),
+            nn.PReLU(dense_channel),
         )
-        self.phase_conv_r = nn.Conv2d(dense_channel, out_channel, (1, 1))
-        self.phase_conv_i = nn.Conv2d(dense_channel, out_channel, (1, 1))
+        self.phase_conv_r = nn.Conv2d(dense_channel, out_channel, (1, 2))
+        self.phase_conv_i = nn.Conv2d(dense_channel, out_channel, (1, 2))
 
     def forward(self, x):
         x = self.dense_block(x)
@@ -306,6 +309,7 @@ class PhaseDecoder(nn.Module):
         x_i = self.phase_conv_i(x)
         x = torch.atan2(x_i, x_r)
         return x
+
 
 class PrimeKnetv10(nn.Module):
     def __init__(self, 
@@ -332,6 +336,7 @@ class PrimeKnetv10(nn.Module):
 
         mag = mag.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
         pha = pha.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
+
         x = torch.cat((mag, pha), dim=1) # [B, 2, T, F]
 
         x = self.dense_encoder(x)
