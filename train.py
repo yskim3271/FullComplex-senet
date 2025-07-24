@@ -92,8 +92,8 @@ def run(rank, world_size, args):
         # Calculate and log the total number of parameters and model size
         logger.info(f"Selected model: {model_lib}.{model_class}")
         total_params = sum(p.numel() for p in model.parameters())
-        model_size_mb = (total_params) / (1024 * 1024)
-        logger.info(f"Model's size: {model_size_mb:.2f} MB")
+        model_params = (total_params) / 1000000
+        logger.info(f"Model's parameters: {model_params:.2f} M")
 
         if args.save_code:
             # Use hydra.utils.to_absolute_path to get the correct path
