@@ -316,7 +316,19 @@ def test_primeknetv6():
     )
     y = model(x)
 
-
+def test_primeknetv7():
+    from models.primeKnetv7 import PrimeKnetv7
+    model = PrimeKnetv7(
+        fft_len=400,
+        dense_channel=64,
+        sigmoid_beta=2,
+        num_tsblock=4
+    )
+    x = dict(
+        magnitude=torch.randn(1, 201, 400),
+        phase=torch.randn(1, 201, 400)
+    )
+    y = model(x)
 
 def test_primeknetv9():
     from models.primeKnetv9 import PrimeKnetv9
@@ -344,7 +356,8 @@ if __name__ == "__main__":
     # test_TFconv()
     # test_primeknetv4()
     # test_primeknetv5()
-    test_primeknetv6()
+    # test_primeknetv6()
+    test_primeknetv7()
     # test_primeknetv9()
     # test_primeknetv2()
     # test_layernorm_vs_instancenorm()
