@@ -4,59 +4,47 @@ defaults:
   - override hydra/hydra_logging: colorlog
 
 # Dataset related
-sampling_rate: 16000
 segment: 32000
-fft_size: 400
+n_fft: 400
 hop_size: 100
-win_length: 400
+win_size: 400
 compress_factor: 0.3
 use_pcs400: true
 
-batch_size: 4
+
+use_huggingface: false
+input_train_file_list: VoiceBank+DEMAND/training_list.txt
+input_valid_file_list: VoiceBank+DEMAND/test_list.txt
+batch_size: 2
 batch_size_valid: 1
 epochs: 200
-
-eval_every: 100 # compute test metrics every so epochs
-
-# Loss related
-loss:
-  phase_loss: 0.3
-  magnitude_loss: 0.9
-  complex_loss: 0.1
-  consistency_loss: 0.1
-
-  metricgan_loss:
-    weight_disc: 1
-    weight_gen: 0.05
-    ndf: 16
-    pesq_workers: 8
-    use_torch_pesq: false
 
 # Optimization related
 lr: 5e-4
 lr_decay: 0.99
 optim: adamW
 betas: [0.8, 0.99]
-clip_grad_norm: 
-validate_with_pesq: true
 
 # Logging and printing, and does not impact training
 device: cuda
-num_prints: 10
 num_workers: 5
 ddp:
   master_addr: localhost
   master_port: 12355
 
-checkpoint: true
-checkpoint_file: checkpoint.th
+log_interval: 500
+summary_interval: 500
+validation_interval: 1000
+evaluation_interval: 50
+best_models_num: 5
+
 continue_from: 
 samples_dir: samples
 log_dir: tensorbd
+save_code: true
 
 # Other stuff
 seed: 2039
-save_code: true
 
 # Hydra config
 hydra:

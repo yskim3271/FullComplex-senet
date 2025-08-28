@@ -7,27 +7,31 @@
 import torch
 import numpy as np
 from compute_metrics import compute_metrics
-from data import mag_pha_istft
-from utils import bold, LogProgress
-    
+from data import mag_pha_stft, mag_pha_istft    
 
-def evaluate(args, model, data_loader, logger, epoch=None):
+def evaluate(model, data_loader, device, steps=None, stft_args=None):
     
-    prefix = f"Epoch {epoch+1}, " if epoch is not None else ""
-    metrics = {}
     model.eval()
-    iterator = LogProgress(logger, data_loader, name=f"Evaluate")
+    prefix = f"Steps {steps}, " if steps is not None else ""
 
     results = []
     with torch.no_grad():
-        for data in iterator:
-            noisy, clean, id = data
-            noisy = {key: value.to(args.device) for key, value in noisy.items()}
+        for data in data_loader:
+            noisy, clean, _ = data
+            noisy = noisy.to(device)
+            clean = clean.to(device)
+            noisy_mag, noisy_pha, noisy_com = mag_pha_stft(noisy, **stft_args)
 
-            clean_hat = model(noisy)
-            clean_hat = mag_pha_istft(clean_hat["magnitude"], clean_hat["phase"], args.fft_size, args.hop_size, args.win_length, args.compress_factor)
+            clean_mag_hat, clean_pha_hat, clean_com_hat = model(noisy_com)
+
+            clean_hat = mag_pha_istft(clean_mag_hat, clean_pha_hat, **stft_args)
+
+            clean = clean.squeeze().detach().cpu().numpy()
             clean_hat = clean_hat.squeeze().detach().cpu().numpy()
-            clean = clean["wav"].squeeze().detach().cpu().numpy()
+            if len(clean) != len(clean_hat):
+                length = min(len(clean), len(clean_hat))
+                clean = clean[0: length]
+                clean_hat = clean_hat[0: length]
             results.append(compute_metrics(clean, clean_hat))
     
     pesq, csig, cbak, covl, segSNR, stoi = np.mean(results, axis=0)
@@ -38,7 +42,5 @@ def evaluate(args, model, data_loader, logger, epoch=None):
         "cbak": cbak,
         "covl": covl,
         "segSNR": segSNR
-    }
-    logger.info(bold(f"{prefix}Performance: PESQ={pesq:.4f}, STOI={stoi:.4f}, CSIG={csig:.4f}, CBAK={cbak:.4f}, COVL={covl:.4f}, SEGSNR={segSNR:.4f}"))
-   
+    }   
     return metrics

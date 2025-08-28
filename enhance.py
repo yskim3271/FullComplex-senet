@@ -53,6 +53,14 @@ def enhance(args, model, data_loader, logger, epoch=None, local_out_dir="samples
             noisy = noisy["wav"].squeeze(1).detach().cpu()
             clean_hat = mag_pha_istft(clean_hat["magnitude"], clean_hat["phase"], args.fft_size, args.hop_size, args.win_length, args.compress_factor)
             clean_hat = clean_hat.squeeze(1).detach().cpu()
+
+            max_val = torch.max(torch.abs(torch.cat([clean, noisy, clean_hat])))
+
+            eps = 1e-9
+
+            clean = (clean / (max_val + eps)) * 0.95
+            noisy = (noisy / (max_val + eps)) * 0.95
+            clean_hat = (clean_hat / (max_val + eps)) * 0.95
                         
             wavs_dict = {
                 "noisy": noisy,

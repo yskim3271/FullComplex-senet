@@ -1,0 +1,8 @@
+model_lib: complexsenet
+model_class: ComplexSENet
+
+param:
+  dense_channel: 64
+  beta: 2.0
+  num_tsblock: 4
+

@@ -6,11 +6,8 @@ import importlib
 import hydra
 import random
 import torch
-import torch.distributed as dist
 import numpy as np
 from omegaconf import OmegaConf
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 from datasets import load_dataset
 from models.discriminator import MetricGAN_Discriminator
@@ -30,52 +27,26 @@ def kill_child_processes():
         except psutil.NoSuchProcess:
             pass
 
-def setup_logger(name, rank=None):
+def setup_logger(name):
     """Set up logger"""
-    if rank == 0:
-        hydra_conf = OmegaConf.load(".hydra/hydra.yaml")
-        logging.config.dictConfig(OmegaConf.to_container(hydra_conf.hydra.job_logging, resolve=True))
-    else:
-        logging.basicConfig(level=logging.ERROR)
-        
+    hydra_conf = OmegaConf.load(".hydra/hydra.yaml")
+    logging.config.dictConfig(OmegaConf.to_container(hydra_conf.hydra.job_logging, resolve=True))
     return logging.getLogger(name)
 
-def setup_distributed(rank, world_size, args):
-    """Initialize distributed training environment"""
-    os.environ['MASTER_ADDR'] = str(args.ddp.master_addr)
-    os.environ['MASTER_PORT'] = str(args.ddp.master_port)
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
 
-def cleanup():
-    """Clean up distributed training environment"""
-    if dist.is_initialized():
-        dist.destroy_process_group()
-
-def parse_list(dir, file):
-    return [os.path.join(dir, line.strip()) for line in open(file, "r")]
-
-def run(rank, world_size, args):
+def run(args):
         
     # Create and initialize logger
-    logger = setup_logger("train", rank)
+    logger = setup_logger("train")
 
-    # Set up distributed training environment
-    if world_size > 1:
-        setup_distributed(rank, world_size, args)
-    
-    if rank == 0:
-        logger.info(f"Training with {world_size} GPUs")
-    
     # Set random seed
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
     
-
     # Set device
-    device = torch.device(f'cuda:{rank}')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     
     model_args = args.model
     model_lib = model_args.model_lib
@@ -88,163 +59,96 @@ def run(rank, world_size, args):
     model = model_class(**model_args.param)
     model = model.to(device)
 
-    if rank == 0:
-        # Calculate and log the total number of parameters and model size
-        logger.info(f"Selected model: {model_lib}.{model_class}")
-        total_params = sum(p.numel() for p in model.parameters())
-        model_params = (total_params) / 1000000
-        logger.info(f"Model's parameters: {model_params:.2f} M")
+    # Calculate and log the total number of parameters and model size
+    logger.info(f"Selected model: {model_lib}.{model_class}")
+    total_params = sum(p.numel() for p in model.parameters())
+    model_params = (total_params) / 1000000
+    logger.info(f"Model's parameters: {model_params:.2f} M")
 
-        if args.save_code:
-            # Use hydra.utils.to_absolute_path to get the correct path
-            original_file = hydra.utils.to_absolute_path(__file__)
-            project_root = os.path.dirname(original_file)
-            src = os.path.join(project_root, "models", f"{model_lib}.py")
-            dest = f"./{model_lib}.py"
-            
-            if os.path.exists(src):
-                shutil.copy2(src, dest)
-                logger.info(f"Copied {src} to {dest}")
-            else:
-                logger.warning(f"Model file not found: {src}")
-
-    discriminator = None
-    optim_disc = None
+    if args.save_code:
+        # Use hydra.utils.to_absolute_path to get the correct path
+        project_root = os.path.dirname(hydra.utils.to_absolute_path(__file__))
+        src = os.path.join(project_root, "models", f"{model_lib}.py")
+        dest = f"./{model_lib}.py"
+        
+        if os.path.exists(src):
+            shutil.copy2(src, dest)
+            logger.info(f"Copied {src} to {dest}")
+        else:
+            logger.warning(f"Model file not found: {src}")
 
     if args.optim == "adam":
         optim_class = torch.optim.Adam
     elif args.optim == "adamW" or args.optim == "adamw":
         optim_class = torch.optim.AdamW
 
-    metricganloss_cfg = args.loss.get("metricgan_loss")
-
-    if metricganloss_cfg is not None:
-        if world_size > 1 and not metricganloss_cfg.get("use_torch_pesq", False):
-            # Traditional PESQ calculation can occur deadlock with DDP. Use torch_pesq instead.
-            logger.error("MetricGAN Loss with traditional PESQ cannot be used with DDP. Please use a single GPU.")
-            cleanup()
-            if torch.distributed.is_initialized():
-                torch.distributed.destroy_process_group()
-            sys.exit(0)
-            
-        discriminator = MetricGAN_Discriminator(ndf=metricganloss_cfg.ndf)
-        discriminator = discriminator.to(args.device)
-        del metricganloss_cfg.ndf
-    
-    if world_size > 1:
-        model = DDP(model, device_ids=[rank])
-        if discriminator is not None:
-            discriminator = DDP(discriminator, device_ids=[rank])
+    discriminator = MetricGAN_Discriminator().to(device)
 
     # optimizer
     optim = optim_class(model.parameters(), lr=args.lr, betas=args.betas)
-    if discriminator is not None:
-        optim_disc = optim_class(discriminator.parameters(), lr=args.lr, betas=args.betas)
-        
+    optim_disc = optim_class(discriminator.parameters(), lr=args.lr, betas=args.betas)
+    
+    # scheduler
     scheduler = None
     scheduler_disc = None
 
     if args.lr_decay is not None:
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optim, gamma=args.lr_decay, last_epoch=-1)
-        if discriminator is not None:
-            # Use a separate scheduler for the discriminator
-            scheduler_disc = torch.optim.lr_scheduler.ExponentialLR(optim_disc, gamma=args.lr_decay, last_epoch=-1)
+        scheduler_disc = torch.optim.lr_scheduler.ExponentialLR(optim_disc, gamma=args.lr_decay, last_epoch=-1)
 
-    # Load dataset
-    if rank == 0:
+    # Load dataset from Huggingface
+    if args.use_huggingface:
         dataset = load_dataset("JacobLinCool/VoiceBank-DEMAND-16k")
-    if world_size > 1:
-        dist.barrier()
-    if rank != 0:
-        dataset = load_dataset("JacobLinCool/VoiceBank-DEMAND-16k")
+        trainset = dataset['train']
+        validset = dataset['test']
+    else:
+        # Convert relative paths to absolute paths for train and valid file lists
+        project_root = os.path.dirname(hydra.utils.to_absolute_path(__file__))
+        trainset = os.path.join(project_root, args.input_train_file_list)
+        validset = os.path.join(project_root, args.input_valid_file_list)
+        if trainset is None or validset is None:
+            logger.error("input_train_file_list and input_valid_file_list are not set")
+            sys.exit(1)
     
-    trainset = dataset['train']
-    testset = dataset['test']
-                
+    
     # Set up dataset and dataloader
-    tr_dataset = VoiceBankDataset(
-        datapair_list=trainset,
-        sampling_rate=args.sampling_rate,
-        segment=args.segment, 
-        fft_len=args.fft_size,
-        hop_size=args.hop_size,
-        win_size=args.win_length,
-        compress_factor=args.compress_factor,
-        type="train",
-        use_pcs400=args.use_pcs400
-    )
+    tr_dataset = VoiceBankDataset(trainset, use_pcs400=args.use_pcs400, use_huggingface=args.use_huggingface, segment=args.segment)
     
-    # Set up distributed sampler
-    tr_sampler = DistributedSampler(tr_dataset) if  world_size > 1 else None
+    # Sampler (not used in single GPU mode)
     tr_loader = DataLoader(
         dataset=tr_dataset,
         batch_size=args.batch_size,
-        sampler=tr_sampler,
-        shuffle=(tr_sampler is None),
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
+
+    # Set up validation and test dataset and dataloader
+    va_dataset = VoiceBankDataset(
+        validset, use_pcs400=False, use_huggingface=args.use_huggingface
+    )
+    
+    va_loader = DataLoader(
+        dataset=va_dataset, 
+        batch_size=1,
         num_workers=args.num_workers,
         pin_memory=True
     )
     
-
-    # We only use validation, test set on rank 0
-    # Set up validation and test dataset and dataloader
-    if rank == 0:
-        va_dataset = VoiceBankDataset(
-            datapair_list=testset,
-            sampling_rate=args.sampling_rate,
-            fft_len=args.fft_size,
-            hop_size=args.hop_size,
-            win_size=args.win_length,
-            compress_factor=args.compress_factor,
-            type="valid",
-            use_pcs400=False
-        )
-        va_loader = DataLoader(
-            dataset=va_dataset, 
-            batch_size=1,
-            num_workers=args.num_workers,
-            pin_memory=True
-        )
-        
-        ev_dataset = VoiceBankDataset(
-            datapair_list=testset,
-            sampling_rate=args.sampling_rate,
-            fft_len=args.fft_size,
-            hop_size=args.hop_size,
-            win_size=args.win_length,
-            compress_factor=args.compress_factor,
-            with_id=True,
-            type="test",
-            use_pcs400=False
-        )
-        
-        ev_loader = DataLoader(
-            dataset=ev_dataset, 
-            batch_size=1,
-            num_workers=args.num_workers,
-            pin_memory=True
-        )
-        
-        tt_loader = DataLoader(
-            dataset=ev_dataset, 
-            batch_size=1,
-            sampler=StepSampler(len(ev_dataset), 100),
-            num_workers=args.num_workers,
-            pin_memory=True
-        )
-    else:
-        va_loader = None
-        ev_loader = None
-        tt_loader = None
+    ev_loader = DataLoader(
+        dataset=va_dataset, 
+        batch_size=1,
+        sampler=StepSampler(len(va_dataset), 100),
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
     
     dataloader = {
         "tr_loader": tr_loader,
         "va_loader": va_loader,
         "ev_loader": ev_loader,
-        "tt_loader": tt_loader,
-        "tr_sampler": tr_sampler,
     }
-    
+
     # Solver
     solver = Solver(
         data=dataloader,
@@ -256,14 +160,10 @@ def run(rank, world_size, args):
         scheduler_disc=scheduler_disc,
         args=args,
         logger=logger,
-        rank=rank,
-        world_size=world_size,
         device=device
     )
     solver.train()
-    
-    cleanup()
-        
+    sys.exit(0)
 
 def _main(args):
     global __file__
@@ -274,21 +174,8 @@ def _main(args):
     
     logger.info("For logs, checkpoints and samples check %s", os.getcwd())
     logger.debug(args)
-    
-    world_size = torch.cuda.device_count()
-    
-    if world_size > 1:
-        import torch.multiprocessing as mp
-        try:
-            mp.spawn(run, args=(world_size, args), nprocs=world_size, join=True)
-        except KeyboardInterrupt:
-            logger.info("Training stopped by user")
-            kill_child_processes()
-        except Exception as e:
-            logger.exception(f"Error occurred in spawn: {str(e)}")
-            kill_child_processes()
-    else:
-        run(0, 1, args)
+
+    run(args)
 
 @hydra.main(config_path="conf", config_name="config", version_base="1.3")
 def main(args):

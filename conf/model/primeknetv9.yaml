@@ -1,8 +1,0 @@
-model_lib: primeKnetv9
-model_class: PrimeKnetv9
-
-param:
-  fft_len: 400
-  dense_channel: 64
-  sigmoid_beta: 2.0
-  num_tsblock: 4
