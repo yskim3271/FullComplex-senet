@@ -27,7 +27,7 @@ betas: [0.8, 0.99]
 
 # Logging and printing, and does not impact training
 device: cuda
-num_workers: 5
+num_workers: 1
 ddp:
   master_addr: localhost
   master_port: 12355

@@ -67,6 +67,7 @@ class Solver(object):
         self.best_models = []
         self.log_dir = args.log_dir
         self.samples_dir = args.samples_dir
+        self.num_workers = args.num_workers
         self.args = args
 
         self.epoch_start = 0
@@ -248,7 +249,7 @@ class Solver(object):
         clean_mag_hat_con, clean_pha_hat_con, clean_com_hat_con = mag_pha_stft(clean_hat, **self.stft_args)
 
         clean_list, clean_list_hat = list(clean.cpu().numpy()), list(clean_hat.detach().cpu().numpy())
-        batch_pesq_score = batch_pesq(clean_list, clean_list_hat)
+        batch_pesq_score = batch_pesq(clean_list, clean_list_hat, workers=self.num_workers)
 
         self.optim_disc.zero_grad()
 
@@ -340,7 +341,7 @@ class Solver(object):
         val_err_complex /= len(self.va_loader)
         val_err_mag /= len(self.va_loader)
         val_err_phase /= len(self.va_loader)
-        val_pesq_score = batch_pesq(clean_list, clean_hat_list, workers=15, normalize=False).mean().item()
+        val_pesq_score = batch_pesq(clean_list, clean_hat_list, workers=self.num_workers, normalize=False).mean().item()
         if val_pesq_score is None:
             val_pesq_score = 0
 
