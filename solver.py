@@ -176,12 +176,11 @@ class Solver(object):
             self.logger.info("Resuming training from epoch %d", self.epoch_start + 1)
         
         for epoch in range(self.epoch_start, self.epochs):
+            self.logger.info(f"Train | Epoch {epoch + 1} | Learning Rate {self.optim.param_groups[0]['lr']:.6f}")
             for i, (noisy, clean, _) in enumerate(self.tr_loader):
                 steps = epoch * len(self.tr_loader) + i + 1
                 start = time.time()
-
-                self.logger.info(f"Train | Epoch {epoch + 1} | Learning Rate {self.optim.param_groups[0]['lr']:.6f}")
-        
+                
                 loss_dict = self._run_one_step(noisy, clean)
 
                 if steps % self.log_interval == 0:
