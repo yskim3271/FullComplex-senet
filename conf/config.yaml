@@ -12,12 +12,20 @@ compress_factor: 0.3
 use_pcs400: true
 
 
-use_huggingface: false
+use_huggingface: true
 input_train_file_list: VoiceBank+DEMAND/training_list.txt
 input_valid_file_list: VoiceBank+DEMAND/test_list.txt
 batch_size: 2
 batch_size_valid: 1
 epochs: 200
+
+# Loss related
+loss:
+  magnitude: 0.9
+  phase: 0.3
+  complex: 0.1
+  consistency: 0.1
+  metric: 0.05
 
 # Optimization related
 lr: 5e-4
@@ -27,7 +35,7 @@ betas: [0.8, 0.99]
 
 # Logging and printing, and does not impact training
 device: cuda
-num_workers: 1
+num_workers: 15
 ddp:
   master_addr: localhost
   master_port: 12355

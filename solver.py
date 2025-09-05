@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from evaluate import evaluate
 from data import mag_pha_istft, mag_pha_stft, segment_sample
-from utils import copy_state, swap_state, anti_wrapping_function, batch_pesq
+from utils import copy_state, swap_state, anti_wrapping_function, batch_pesq, phase_losses
 
 class Solver(object):
     def __init__(
@@ -34,6 +34,11 @@ class Solver(object):
         self.optim_disc = optim_disc
         self.scheduler = scheduler
         self.scheduler_disc = scheduler_disc
+
+        # loss weights
+        self.loss = args.loss
+
+        # logger
         self.logger = logger
 
         # dataset
@@ -190,7 +195,7 @@ class Solver(object):
                 
                 if steps % self.summary_interval == 0:
                     for key, value in loss_dict.items():
-                        self.writer.add_scalar(f"Train/{key}", value, steps)
+                        self.writer.add_scalar(f"Train/{key}_Loss", value, steps)
                     
                 if steps % self.validation_interval == 0:
                     val_pesq_score = self._run_validation(epoch, steps)
@@ -271,24 +276,32 @@ class Solver(object):
 
         self.optim.zero_grad()
 
+        loss_magnitude = F.mse_loss(clean_mag, clean_mag_hat)
+        loss_phase = phase_losses(clean_pha, clean_pha_hat)
         loss_complex = F.mse_loss(clean_com, clean_com_hat) * 2
         loss_consistency = F.mse_loss(clean_com_hat, clean_com_hat_con)
 
         metric_g = self.discriminator(clean_mag.unsqueeze(1), clean_mag_hat_con.unsqueeze(1))
         loss_metric = F.mse_loss(metric_g.flatten(), one_labels)
 
-        loss_gen = loss_metric * 0.05 + loss_complex * 2 + loss_consistency * 0.1
+        loss_gen = loss_metric * self.loss.metric + \
+                   loss_complex * self.loss.complex + \
+                   loss_consistency * self.loss.consistency + \
+                   loss_magnitude * self.loss.magnitude + \
+                   loss_phase * self.loss.phase
 
         loss_gen.backward()
 
         self.optim.step()
 
         loss_dict = {
-            "Metric_Loss": loss_metric,
-            "Complex_Loss": loss_complex,
-            "Consistency_Loss": loss_consistency,
-            "Disc_Loss": loss_disc,
-            "Gen_Loss": loss_gen
+            "Metric": loss_metric,
+            "Complex": loss_complex,
+            "Consistency": loss_consistency,
+            "Phase": loss_phase,
+            "Magnitude": loss_magnitude,
+            "Disc": loss_disc,
+            "Gen": loss_gen
         }
 
         return loss_dict

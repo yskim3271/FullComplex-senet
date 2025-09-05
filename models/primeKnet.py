@@ -393,10 +393,14 @@ class PrimeKnet(nn.Module):
         self.mask_decoder = MaskDecoder(dense_channel, fft_len, sigmoid_beta, out_channel=1)
         self.phase_decoder = PhaseDecoder(dense_channel, out_channel=1)
 
-    def forward(self, inputs):
+    def forward(self, noisy_com):
         # Input shape: [B, F, T]
-        mag = inputs["magnitude"]
-        pha = inputs["phase"]
+
+        real = noisy_com[:, :, :, 0]
+        imag = noisy_com[:, :, :, 1]
+
+        mag = torch.sqrt(real**2 + imag**2)
+        pha = torch.atan2(imag, real)
 
         mag = mag.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
         pha = pha.unsqueeze(1).permute(0, 1, 3, 2) # [B, 1, T, F]
@@ -412,11 +416,5 @@ class PrimeKnet(nn.Module):
         denoised_pha = self.phase_decoder(x).permute(0, 3, 2, 1).squeeze(-1)
         
         denoised_com = mag_pha_to_complex(denoised_mag, denoised_pha)
-        
-        outputs = {
-            "magnitude": denoised_mag,
-            "phase": denoised_pha,
-            "complex": denoised_com,
-        }
 
-        return outputs
+        return denoised_mag, denoised_pha, denoised_com
