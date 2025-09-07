@@ -1,4 +1,4 @@
-model_lib: complexsenetver2
+model_lib: complexsenetver3
 model_class: ComplexSENet
 
 param:

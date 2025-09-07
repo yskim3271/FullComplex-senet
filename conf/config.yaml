@@ -9,15 +9,15 @@ n_fft: 400
 hop_size: 100
 win_size: 400
 compress_factor: 0.3
-use_pcs400: true
+use_pcs400: false
 
 
-use_huggingface: true
+use_huggingface: false
 input_train_file_list: VoiceBank+DEMAND/training_list.txt
 input_valid_file_list: VoiceBank+DEMAND/test_list.txt
 batch_size: 2
 batch_size_valid: 1
-epochs: 200
+epochs: 150
 
 # Loss related
 loss:
